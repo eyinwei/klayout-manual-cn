@@ -1,0 +1,81 @@
+% TeX program = xelatex
+% !TeX encoding = UTF-8
+% ---------------------------------------------------------------------------
+%  KLayout 用户手册 · 中文版
+%
+%  原著：Matthias Köfferlein，GNU General Public License v3
+%  底稿：https://github.com/KLayout/klayout  src/doc/doc/manual/
+%        commit 7eb9a25（2026-10-18），与 KLayout 0.30.12 同版
+%
+%  翻译约定：
+%    · 术语一律保留英文原词（Layer View / Cell / Instance / Flatten / Partial Mode …），
+%      首次出现时以“Cell（单元）”形式括注中文，之后只用英文原词
+%    · 菜单项、按钮、对话框、命令、参数、代码一律保留英文
+%    · 叙述文字译成中文
+%
+%  编译：xelatex main.tex  ×2（生成目录与交叉引用后）
+% ---------------------------------------------------------------------------
+\documentclass[UTF8,zihao=-4,a4paper,oneside]{ctexbook}
+
+\setCJKmainfont{FandolSong-Regular.otf}[BoldFont=FandolSong-Bold.otf,ItalicFont=FandolKai-Regular.otf]
+\setCJKsansfont{FandolHei-Regular.otf}
+\setCJKmonofont{FandolFang-Regular.otf}
+\setmainfont{TeX Gyre Pagella}
+\setsansfont{TeX Gyre Heros}
+\setmonofont{TeX Gyre Cursor}
+
+\usepackage{klayout-manual}
+\graphicspath{{figures/}}
+
+\title{KLayout 用户手册\\[0.4em]\large 中文版}
+\author{原著：Matthias Köfferlein\\[0.3em]\small 非官方中文译本 · 对应 KLayout 0.30.12}
+\date{2026-10-24}
+
+\begin{document}
+
+\frontmatter
+\maketitle
+
+\chapter{关于本译本}
+
+\begin{klNote}[版权与免责]
+KLayout 及其文档由 Matthias Köfferlein 开发，以 \textbf{GNU General Public License v3} 发布，
+完整许可见文末所附 \texttt{LICENSE}。本文件是其手册的非官方中文翻译，同样按 GPLv3 提供。
+译文仅供学习参考，遇有歧义或与程序行为不符之处，\textbf{以英文原版为准}。
+\end{klNote}
+
+本译本遵循以下约定：
+
+\begin{itemize}[leftmargin=2em]
+  \item \textbf{术语保留英文原词}。例如 Layer View、Layer Set、Cell、Instance、PCell、Flatten、
+        Partial Mode、DRC、LVS 等一律不译，首次出现时以“Cell（单元）”的形式括注中文，之后只用英文。
+  \item \textbf{界面文字保留英文}。菜单项、按钮、对话框标题、输入框标签、命令、快捷键、文件格式、
+        图层名与参数名均保持原样，以等宽字体或浅底框标出，例如 \ui{Change Layer}、\menu{View > Navigator}、\kbd{F3}。
+  \item \textbf{代码与脚本不译}，注释亦保留原文，以免与程序实际行为脱节。
+  \item 原文中的提示、注意事项放在浅底样式框中；界面元素说明单独成框并注明“原文保留”。
+\end{itemize}
+
+原文的章次结构保持不变，分为 KLayout Basics、Editing Functions、Advanced Topics、Design Rule Check (DRC)
+与 Layout vs. Schematic (LVS) 五章。
+
+\tableofcontents
+\clearpage
+
+\mainmatter
+
+% ===========================================================================
+% 五个部（原手册的五个部分）各成一章；不再使用 \part 分卷
+% ===========================================================================
+\input{chapters/basic}
+\input{chapters/editor}
+\input{chapters/advanced}
+\input{chapters/drc}
+\input{chapters/lvs}
+
+\appendix
+\chapter{许可证（GNU General Public License v3）}
+
+KLayout 及其文档的完整许可文本见随本工程附带的 \texttt{LICENSE-klayout.txt}；版权声明见
+\texttt{COPYRIGHT-klayout.txt}。两者均为上游原文，未作改动。
+
+\end{document}

@@ -1,0 +1,737 @@
+% KLayout Basics —— 由 work/build.py 自动生成，勿手改；改译文请改 work/translations/
+\chapter{KLayout Basics}\label{ch:basic}
+
+\section{主窗口}\label{sec:main_window}
+
+主窗口分为三个部分：左侧是层次浏览器与导航器，中间是画布，右侧是图层列表及图层样式控件。各组件的位置可以重新排列，因此上述布局只是默认布局。拖动某组件的标题栏即可把它移到别处，也可以把它从主窗口中拖出，成为一个独立的浮动窗口。
+
+\klfig[0.8\textwidth]{main_window.png}{KLayout 主窗口的默认布局}
+
+\subsection{左栏：层次浏览器、Library View 与导航器}
+
+左侧面板是层次浏览器，用来显示 Cell 的层次结构；还可以在其中显示导航器，后者给出整个版图的缩略总览。
+
+在层次浏览器中，Cell 节点可以展开以显示其子节点。current cell（当前单元）是指当前显示在中间画布里的那个 Cell，以粗体绘制。可以选中一个或多个 Cell，各种操作就作用于被选中的这些 Cell。context cell（上下文单元）则是绘制操作真正落在其上的 active cell（活动单元）；上下文通常与当前单元相同，但向层次内部下行之后，当前 Cell 的子 Cell 也可以成为上下文单元。它以下划线字体显示。
+
+在下图的例子中，"TOPTOP\_BIG" 处于选中状态，"TOPTOP" 是当前 Cell，"TOP" 则是上下文 Cell：
+
+\klfig[0.92\textwidth]{hierarchy_panel.png}{层次面板中选中、当前与上下文三种状态}
+
+层次浏览器下方的子面板是 library view。该视图显示系统中已注册的库及其内容：
+
+\klfig[0.8\textwidth]{library_view.png}{library view}
+
+library view 用于浏览并放置库中的 Cell，这些 Cell 可以是普通 Cell，也可以是 PCell。详见 \ref{sec:library_view}。
+
+导航器默认不可见，勾选 \menu{View} 菜单里的 \ui{Navigator} 菜单项即可启用。导航器给出整个 Cell 的缩略图，并用一个方框标出中间画布当前显示的区域：
+
+\klfig[0.8\textwidth]{navigator.png}{导航器：缩略图与当前视区方框}
+
+\subsection{中栏：画布}
+
+中间面板才是真正的画布，版图就绘制在这里。要放大，按住鼠标右键拖出一个矩形，该矩形即为新的显示区域。要选择对象，用鼠标左键单击，或按住左键拖出选择矩形。这里还提供大量编辑与显示相关的功能，例如添加标尺、叠加背景图片等。
+
+\subsection{右栏：图层列表与图层样式控件}
+
+右侧面板显示图层列表（或称图层树）。默认是普通图层列表，但配置方式很多：分组、设置样式、加标签页以便在不同配置之间快速切换等。
+
+图层树决定了版图画什么、怎么画。表中的条目可以随意删除或配置，这不会影响版图数据本身。本质上，图层列表可以完全独立于版图：既可以把版图中的某些图层省略不显示，也可以加入版图里根本不存在的（空）图层。这种用法下，图层列表通常反映的是某套工艺所定义的一批绘制图层。对于本身没有样式的版图文件，图层列表正好提供了带样式的显示视图。图层可以重新排序，从而改变绘制优先级：排在最上方的图层会先画，其余图层随后覆盖其上，所以靠前的图层反而容易被后面的图层挡住。
+
+图层上还可以挂接修改算子（modification operator），例如对绘制的版图做几何变换（平移、旋转、缩放、镜像），或仅在用户属性满足特定条件时才绘制该版图。
+
+图层列表下方是一组控制面板，默认处于折叠状态，点击标题栏即可展开。这些控件构成 Layer Toolbox，用来修改图层样式：工具箱中选定的样式会作用于图层列表中选中的那些图层。
+
+多个版图可以同时显示：既可以叠加显示，也可以放在各自独立的视图中；后者会在主窗口顶部多出一个标签栏，切换标签即可切换版图。不同版图的图层会以带标注的形式出现在图层列表中，例如 "1/0@1" 表示第一个版图的第 1 层、datatype 0，"1/0@2" 表示第二个版图的同一层。
+
+\section{加载文件}\label{sec:loading}
+
+在 \menu{File} 菜单中选择：
+
+\begin{kldesc}
+\item \ui{Open}：关闭当前视图，并加载一个新版图来取代当前已加载的版图
+\item \ui{Open in Same Panel}：在当前已加载的版图之外，再于同一面板中加载一个新版图
+\item \ui{Open in New Panel}：在新视图中加载一个新版图
+\end{kldesc}
+
+无论走哪条路径，都会弹出文件选择对话框，在其中挑好文件即可。选好文件并点击 \ui{Ok} 后，文件即被加载。
+
+程序会自动判断文件类型。目前支持 OASIS、GDS2、DXF、CIF、LEF/DEF 以及 GDS2 的文本版本。Gerber PCB 数据经过一些准备后也能读取（见下文）。若文件是 gzip/zlib 压缩的，会自动解压。
+
+文件读取器（loader）可以通过 reader option 页设置若干选项。要打开读取器选项对话框，从 \menu{File} 菜单选择 \ui{Reader Options}。该对话框对所有 \ui{Open} 操作生效，可指定的选项例如：
+
+\begin{itemize}
+\item 把读取范围限制在若干图层上，其余图层不读取。
+\item 禁止读取 Text 对象。Text 对象对掩模而言不携带几何信息，可以借此丢弃。
+\item 禁止读取 user properties（用户属性）。若不需要属性，禁用后可以减少内存占用。
+\item 若干 GDS 专有选项，主要用于控制与其它工具的兼容程度。
+\item 其它格式也可能提供各自的选项。尤其是 DXF 或 LEF/DEF 这类信息丰富的格式，配置方式很多。对话框用不同标签页分别呈现不同格式或格式组的选项。
+\end{itemize}
+
+使用 \menu{File > Reload} 可以把当前已加载的文件重新从磁盘读入。通常并不需要这么做，因为 KLayout 会自动检查文件是否发生变化，并提示是否加载。
+
+从 \menu{File} 菜单的 \ui{Open Recent} 列表中挑选文件，即可重新加载之前用过的文件。
+
+也可以在命令行中把文件交给 KLayout，程序会自动加载。可以指定多个文件，默认分别显示在不同页面中；若要把多个文件加载到同一页面，在命令行加一个 \ui{-s} 选项。命令行中同样可以给出 \ui{http:} 或 \ui{https:} 地址，此时 KLayout 会从该 URL 下载文件。
+
+文件和 URL 可以直接拖放到 KLayout 主窗口上，KLayout 会加载并显示它们。
+
+版图文件可以与 technology 关联。technology 允许把版图与附加数据（库、宏、net tracer 设置、layer properties 等）绑定在一起。详见相关章节。
+
+\section{管理面板与已加载版图}\label{sec:panels}
+
+从 \menu{File} 菜单选择 \ui{Close}，可以移除某个面板中的版图；若面板中已不再加载任何版图，面板也随之关闭。当前面板中加载了多个版图时会弹出对话框，可从中选择一个或多个版图关闭。\ui{Close All} 会关闭所有面板。
+
+从 \menu{File} 菜单选择 \ui{Clone} 可以复制面板。新面板是当前面板的精确副本，当前面板与新面板都是同一个版图的视图，因此版图在内存中只保留一份。
+
+选择 \ui{Pull In Other Layout} 可以把已加载到其它面板中的版图合并到当前面板里。KLayout 允许同一版图显示在多个面板中，既可以单独以不同配置显示，也可以与其它版图一起显示。\ui{Pull In Other Layout} 让某个面板改为显示另一个面板中的版图，因此它正好是“从含多个版图的面板中关闭一个版图”的逆操作。
+
+\section{选择 Cell}\label{sec:cell}
+
+要显示某个 Cell，在左侧层次浏览器的 Cell 层次中选中它，然后在 Cell 树上单击右键调出上下文菜单，选择 \ui{Show as top}；或者直接用鼠标中键单击该 Cell。
+
+要按名字选择 Cell，从 \menu{Display} 菜单选择 \ui{Select Cell}。弹出的对话框既可以输入名字查找，也可以从按字母排序的列表中挑选。此外，该对话框还允许在 Cell 树中导航，跳到某个子 Cell 或父 Cell。
+
+\section{选择层次深度}\label{sec:hier}
+
+默认只显示所选 Cell 的边界框，这相当于显示的层次层级数为零。若多选一级（Levels 0 到 1），当前 Cell 的各子 Cell 内容会被画出，而再下一层（子 Cell 的子 Cell）则以方框表示。层级数增大后，子 Cell 的细节会画得越来越多，直到当前 Cell 以下的所有 Cell 都以细节形式画出。
+
+要选择更多层次层级：
+
+\begin{kldesc}
+\item 从 \menu{Display} 菜单选择 \ui{Full Hierarchy}，或按 \kbd{*} 键，显示所有层次层级
+\item 从 \menu{Display} 菜单选择 \ui{Box Only}，或按 \kbd{0} 键，只显示边界框（默认）
+\item 从 \menu{Display} 菜单选择 \ui{Top Level Only}，或按 \kbd{1} 键，只显示顶层元素
+\item 从 \menu{Display} 菜单选择 \ui{Increment Hierarchy}，或按 \kbd{+} 键，多显示一级层次
+\item 从 \menu{Display} 菜单选择 \ui{Decrement Hierarchy}，或按 \kbd{-} 键，少显示一级层次
+\item 使用 Cell 列表下方的层次层级输入框，调整当前的最小或最大层级
+\end{kldesc}
+
+\section{配置 Cell 列表}\label{sec:cell_list}
+
+Cell 列表提供两种模式：树状视图（默认）与平坦 Cell 列表。要切换到平坦模式，在 Cell 面板的上下文菜单中勾选 \ui{Flat Cell List} 选项。
+
+若加载了多个版图，各版图的 Cell 列表会分开显示。Cell 列表上方的下拉框用于选择当前要显示的 Cell 树。另一种可选模式是把各 Cell 列表并排显示在 Cell 树面板中；该模式在 Cell 面板的上下文菜单中选 \ui{Split Mode} 开启。在 Split Mode 下点击标题即可选中对应的 Cell 树。当前 Cell 树在某些场合会起作用，例如 \menu{Edit} 菜单中 \menu{Layout} 子菜单里的版图操作。
+
+此外还提供三种排序方式：按名字字母序、按 Cell 尺寸（边界框面积）升序或降序。Cell 尺寸大体上反映设计的规模层次：库与叶 Cell 通常很小，宏模块通常较大。按 Cell 尺寸升序排列时，叶 Cell 会显示在最前面。要改变排序，在 Cell 面板的上下文菜单的 \menu{Sorting} 子菜单里勾选对应选项。
+
+\section{library view}\label{sec:library_view}
+
+除 Cell 列表之外，还提供一个 library view 作为版图面板的辅助视图。这个子面板显示可用的库，并允许浏览库中的 Cell 与 PCell。
+
+默认情况下 library view 位于 Cell 树下方。拖动各视图的标题栏即可重新排列，把它们停靠到主窗口的其它位置。要把窗口布局恢复为默认配置，使用 \menu{View} 菜单中的 \ui{Restore Window}。
+
+library view 一次显示一个库中的 Cell 与 PCell。要选择库，在 library view 顶部的选择框里挑选。
+
+PCell 在 library view 中以一个小齿轮图标表示。若某个 PCell 已被实例化，正在使用中的各个 variant 会作为条目列在该 PCell 条目之下。
+
+在编辑模式下，把 Cell 从 library view 拖到版图画布上即可方便地放置。拖动的是某个 PCell variant 时，会新建该 variant 的又一份 Instance；拖动的是 PCell 主条目时，放下时 KLayout 会弹出 PCell 参数定义对话框。
+
+\section{隐藏 Cell}\label{sec:hiding}
+
+与显示多少层次层级无关，Cell 还可以被隐藏。被隐藏的 Cell 不再显示内容，只显示其边界框。要隐藏 Cell，在 Cell 列表中选中它，然后在上下文菜单中选 \ui{Hide}；要重新显示，选 \ui{Show}；要让所有 Cell 都重新可见，选 \ui{Show All}。
+
+\section{缩放版图}\label{sec:zoom}
+
+在版图画布中按住鼠标右键框出要缩放的区域。
+
+按住键，把框拖到合适的位置，再松开。
+
+要放大，把框往右下拖；要缩小，把框往左上拖。要换一个新的中心点，用鼠标右键单击新的中心位置即可。
+
+此外，以下功能也可以通过菜单或热键使用：
+
+\begin{kldesc}
+\item 用方向键或 \menu{Display} 菜单中的对应功能向左、右、上、下平移
+\item 按 \kbd{F2}，或从 \menu{Display} 菜单选择 \ui{Zoom Fit}，把选中的整个 Cell 充满窗口
+\item 按 \kbd{Enter} 或 \kbd{Shift+Enter}，或从 \menu{Display} 菜单选择 \ui{Zoom In} / \ui{Zoom Out}，按固定步长放大或缩小
+\item 若鼠标带滚轮，也可以用滚轮缩放。缩放时鼠标当前位置保持不动，其周围的版图被放大或缩小
+\item 按住 Shift 的同时用鼠标右键拖动，可以像近年地图服务网页那样拖拽版图
+\end{kldesc}
+
+\section{全局旋转与翻转}\label{sec:global_trans}
+
+KLayout 提供翻转或旋转整个窗口的选项。例如查看芯片的镜像版掩模数据时，这个选项很有用。
+
+要使用该选项，从 \menu{Display} 菜单的 \menu{Global Transformation} 子菜单中挑一个所需的变换。
+
+\section{回到之前的视图}\label{sec:view_state}
+
+从 \menu{Display} 菜单选择 \ui{Last State} 可回到上一个显示的窗口状态；选择 \ui{Next State} 则再切回较新的状态。
+
+\section{为视图添加 bookmark}\label{sec:bookmarks}
+
+视图（窗口与 Cell 的组合）可以存成 bookmark 以便日后调回。从 \menu{Bookmarks} 菜单选择 \ui{Bookmark This View}，会要求给 bookmark 起个名字。之后该 bookmark 就会出现在 \ui{Goto Bookmarks} 列表中。
+
+已定义的 bookmark 列表可用 \menu{Bookmarks} 菜单中的相应功能载入或保存：载入用 \ui{Load Bookmarks}，保存用 \ui{Save Bookmarks}。
+
+bookmark 列表也可以做成可停靠的工具窗口：勾选 \ui{View/Bookmark List} 选项即可启用。bookmark 列表默认显示在版图视图的右下角。
+
+\subsection{可停靠的 bookmark 列表}
+
+要从可停靠的 bookmark 列表跳转到某个 bookmark，双击该条目即可。在上下文菜单（右键单击）中可以选择以下功能：
+
+\begin{itemize}
+\item \ui{Follow Selection}：勾选后，选中的 bookmark 会立即改变视图。配合该选项可以用方向键在 bookmark 列表中浏览，视图自动随之更新。
+\item \ui{Manage bookmarks}：打开 bookmark 管理对话框（与 \menu{Bookmarks} 菜单中的同名功能一致）。
+\item \ui{Load bookmarks} 与 \ui{Save bookmarks}：从文件载入或把 bookmark 保存到文件（与 \menu{Bookmarks} 菜单中的同名功能一致）。
+\end{itemize}
+
+\section{带上下文下行进入 Cell}\label{sec:descend}
+
+一个 Cell 可以孤立显示（当它是当前 Cell 时的默认方式）、嵌入式显示（作为当前 Cell 的子 Cell），或者在某个直接或间接父 Cell 的上下文中作为当前 Cell 显示。最后这种模式下，该 Cell 被高亮，而上下文 Cell 以变暗或另一种用户自定义的颜色显示。
+
+要在上下文中高亮某个 Cell，先选好上下文 Cell，然后在要显示的那个 Cell 中选中一个 Shape 或 Cell Instance，再从 \menu{Display} 菜单选择 \ui{Descend} 或按 \kbd{Ctrl+D}。此时，通向所选 Shape 的第一个子 Cell 被高亮，而父 Cell（即原先的当前 Cell）周围的 Shape 以变暗的颜色显示。反复选 \ui{Descend} 可继续向层次内部下行，直到所选 Shape 或 Instance 落在当前 Cell 这一层。在 Cell 树中，当前 Cell 以下划线显示，上下文 Cell 照旧以粗体显示。
+
+该操作的逆操作是 \menu{Display} 菜单中的 \ui{Ascend}（或 \kbd{Ctrl+A}）。
+
+上下文版图的显示方式可以在 setup 对话框的 \ui{Background} 标签页中调整。
+
+\section{图层列表（layer view）}\label{sec:layer_views}
+
+layer view 是 KLayout 中的一个重要概念。默认情况下 KLayout 把版图的图层显示在主窗口右侧的列表里，但这个列表并不直接等同于版图数据库中的图层，它是一组 view 的集合。所谓 view，就是对“显示什么、怎么显示”的描述。
+
+本质上，layer 列表中的每个条目都是指向数据库中某个图层的指针，外加一份“如何绘制该图层上的 Shape”的描述，即 layer properties。
+
+这个指针就是 layer view 的 source（来源）。通常是 GDS 的层号与 datatype，也可以是图层名（例如 DXF 中的情况）。还存在抽象来源（例如 Cell 边界），并且 source 可以带 selector 或 modifier。selector 用来只显示具有特定 user properties 的 Shape，或只显示来自特定层次层级的 Shape；modifier 则在绘制之前对 Shape 做变换之类的事。source 由 source specification 定义，即一个描述数据库图层、selector 与 modifier 的字符串。最简单的 source 字符串是 \ui{1/0}，表示 GDS 第 1 层、datatype 0，不带任何 selector 与 modifier。要修改 source，使用 layer 列表上下文菜单中的 \ui{Change Source}。
+
+source specification 字符串的更多用法与细节见相关章节。
+
+除 source 之外，每个 layer 条目还有一个显示名（display name），即一段供用户阅读的任意文字。默认情况下若没有设置显示名，就显示该 layer 的 source。要修改显示名，使用 layer 列表上下文菜单中的 \ui{Rename}。
+
+当然，layer view 还有许多选项用于指定绘制样式、动画与装饰。
+
+把 view 与数据库图层分离这一设计带来了若干有意思的可能性：
+
+\begin{itemize}
+\item layer view 可以通过 source 中的 \ui{@1}、\ui{@2} 等标注引用多版图视图中的各个版图，因此一个 layer 列表里可以混合多个版图。
+\item 列表中可以存在数据库中并不需要的图层，这样的图层显示为空。这一点很重要：在 GDS 中空图层与不存在的图层是等价的，而你可能仍希望它在 layer 列表中出现，view 正好提供了这个选项。
+\item 反过来，若没有对应的 layer view，数据库中的图层也可以不出现在 layer 列表中。这样就能把辅助或调试用的图层从列表中省掉。若需要看到全部图层，可以使用 wildcard specification。
+\item 可以有多个标签页，为同一批版图提供多套视图，也就是另一组 layer view。
+\item 图层的分组、排序等操作都只是对 view 的操作，不涉及数据库改动。
+\end{itemize}
+
+另一方面，这套设计初看有些反直觉。以下是几点提醒：
+
+\begin{itemize}
+\item 重命名图层并不改变 source。若你把某图层改名为 \ui{1/0} 之类，很可能只是在骗自己，以为它就是第 1 层、datatype 0。
+\item 改变某个 layer view 的 source 同样不改变数据库，只是改了指针。要修改数据库中图层的层级信息，使用 \menu{Edit > Layer > Edit Layer Specification}。
+\item 从 layer 列表中删除图层不会把该图层从数据库中删除。要真正删除，使用 \menu{Edit > Layer > Delete Layer}。
+\item 新增图层时并不会立刻在数据库中创建该层，只有当你在这个层上画了东西之后，它才会在数据库中生成。
+\end{itemize}
+
+\section{选择图层颜色}\label{sec:layer_color}
+
+先选中要改颜色的图层，再打开右侧 layer 面板中的取色面板。若取色面板不可见，勾选 \ui{Color} 标题栏上的小复选框把它展开。
+
+要改颜色，直接点击所需的颜色即可。若要选的颜色不在列表中，点击 \ui{More Colors} 按钮，会弹出取色对话框。
+
+若只想改 Shape 外框的颜色而保持填充色不变，使用 \ui{Frame Color} 取色面板。
+
+图层还可以“变暗”或“变亮”，即把颜色调深或调浅，使其与背景的对比减弱。做法是在 color 面板中选 \ui{Dark} 或 \ui{Bright}；每按一次，颜色就更深或更浅一档。用 \ui{Reset} 按钮可以恢复原来的明暗。
+
+\section{区分“有内容”与“空”图层}\label{sec:layer_content}
+
+在某些应用中，layer 列表会变得非常长，盯住其中重要的图层颇为费劲。KLayout 在这方面提供两种支持：它会检查某个图层上是否载有信息，若为空，就在 layer 列表中以不同方式显示该图层。
+
+判断图层是否含内容有两种方式：一是若当前 Cell 在该图层上没有任何 Shape，就认为该层为空；二是若当前视图中没有出现任何 Shape（更准确地说，没有任何 Shape 的边界框与当前视图矩形相交），就认为该层为空。后一种方式可在 layer 列表的上下文菜单中用 \ui{Test For Shapes in View} 选项启用。
+
+判定为空的图层要么变灰显示，要么干脆不显示。后者能让 layer 列表保持简短，可在 layer 列表的上下文菜单中选择 \ui{Hide Empty Layers}。
+
+\section{选择线型}\label{sec:line_style}
+
+line style 控制 Shape 的外框如何绘制，默认是实线。可用的线型有虚线、点划线以及自定义样式。要选定某种线型，先选中要改的图层，再在 \ui{Style} 面板中挑线型。
+
+用 \ui{Custom Style} 按钮可以新建样式，会弹出线型编辑器，可新建与编辑样式；预定义图案不可修改。要应用新样式，在样式选择面板中选 \ui{More}，再从列表中挑新样式。自定义样式会随图层的显示属性一起保存。
+
+\section{图层动画}\label{sec:layer_animation}
+
+图层可以做成动画，即闪烁，或让填充图案滚动。先选中要改的图层，再在 \ui{Animation} 面板中选择动画方式。闪烁模式下可选两个相位：\ui{Blink} 与 \ui{/Blink}；给两个图层选不同的相位，它们就会交替出现。
+
+\section{修改显示样式}\label{sec:layer_style}
+
+先选中要施加改动的图层，再用 \ui{Style} 面板上的宽度按钮改变元素外框的线宽：\ui{0px} 不画线，\ui{1px} 画一个像素宽的线（默认），\ui{2px} 依次加粗，依此类推。
+
+\ui{Simple} 是常规绘制方式；\ui{Marked} 则在元素的每个顶点处画一个十字。十字尺寸恒定，因此在元素本身会缩成一个像素的宏大尺度下，Shape 依然可见。
+
+图层还可以配置成在矩形上画对角十字。要启用这种样式，在 \ui{Styles} 工具箱中选 \ui{Cross}；要关闭则选 \ui{No Cross}。十字绘制叠加在填充图案之上，且只对矩形生效。
+
+\section{图层的可见性}\label{sec:layer_visibility}
+
+在 \ui{Visibility} 面板中选择 \ui{Hide} 选项即可把选中的图层隐藏；选 \ui{Show} 则重新可见。
+
+另外，在 layer 列表中双击一个可见图层，也能切换该图层的可见性。
+
+要让图层“透明”（即让其它图层透出来），在 \ui{Visibility} 面板中选 \ui{Transp.}；要恢复不透明，选 \ui{Opaque}（默认）。
+
+\section{valid 与 invalid 图层}\label{sec:layer_validity}
+
+从 0.23 版起，KLayout 提供“invalid”图层：invalid 图层可以显示，但不参与选中（selection）与吸附（snapping），只起到背景绘制的作用。
+
+在图层上下文菜单中选择 \ui{Make invalid} 即可把图层设为 invalid；选 \ui{Make valid} 可恢复为 valid。invalid 图层在 layer 列表中以一个小写“x”标记。
+
+\section{按层次组织图层}\label{sec:layer_hier}
+
+图层可以按层次组织，例如把某些图层归成一组。在 layer 列表的上下文菜单（右键单击 layer 列表）中选择 \ui{Group}，选中的图层就会被一个代表这些图层的树节点取代。点击该树节点即可展开或折叠这一组。
+
+归组之后，只要在组代表节点上双击一次就能隐藏或显示整组图层。组代表节点还控制组内图层的外观：若给组代表指定了颜色或样式，它会覆盖组内所有图层的相应样式，例如借此一次性改变组内图层的颜色。要取消组代表的颜色覆盖，把颜色设为 \ui{None}。
+
+要拆散一组，选中组代表节点，然后在上下文菜单中选 \ui{Ungroup}。
+
+KLayout 还提供多种自动归组方式。例如图层上下文菜单中的 \kte{Regroup views by layout index} 会把所有图层收拢起来，按面板中显示的各个版图分别成组。
+
+\section{用标签页管理多套图层配置}\label{sec:layer_tabs}
+
+0.21 版引入了新功能：在 layer 面板中使用标签页，切换不同配置（setup）变得非常简单。
+
+在 layer 面板的上下文菜单（右键单击）中，从 \menu{Tabs} 子菜单选 \ui{New Tab} 即可新建标签页。新标签页会出现在 layer properties 面板顶部，起初是当前配置的副本。此后对 layer properties 的任何修改只作用于该标签页；切换到另一个标签页时，版图视图会反映该标签页的设定。这样就能预先准备好几套配置并方便地切换。
+
+保存 layer properties 时，所存文件会包含全部标签页，因此多页配置可以方便地存盘与取回。
+
+标签页的初始标题是标签序号。标题可用 layer 面板上下文菜单 \menu{Tabs} 子菜单中的 \ui{Rename Tab} 修改；要删除标签页，选 \ui{Remove Tab}。
+
+\section{从图层集中增删图层}\label{sec:layer_source}
+
+layer 列表中显示的图层更像是指向真实版图图层的“指针”，而不是真实图层本身。正因如此，这些条目更准确的叫法是 view。图层可以从列表中删掉再建回来，而不影响真正的版图数据。
+
+要新建图层，在图层上下文菜单（右键单击 layer 列表）中选 \ui{Insert View}，随后弹出输入框要求给出 source specification。source specification 说明显示数据取自哪个真实数据层。最简单的形式是“层号/datatype”，例如 \ui{5/0}；若 OASIS 中有图层名，也可以直接写图层名。该说明还可以附加版图序号：面板中加载的第一个版图写作 \ui{@1}，也可以不写；因此 source specification \ui{10/5@2} 指的是面板中第二个版图的第 10 层、datatype 5。
+
+source specification 支持通配符：层号、datatype 或版图序号都可以写成 \ui{*}。此时该图层必须位于某个组内，由组的父节点补全缺失的部分。例如图层写作 \ui{10/*}、父节点写作 \ui{*/5}，实际查找的图层就是 \ui{10/5}。与显示样式的继承规则相反，在 source specification 上是子节点覆盖（细化）父节点。
+
+可以用上下文菜单中的 \ui{Clean up views} 清理 layer 列表，去掉那些与真实版图图层不对应的 layer view。反过来，版图中存在但列表中没有 view 的图层，可以用 \ui{Add other views} 补上。
+
+\section{视图变换与 property selector}\label{sec:layer_source_expert}
+
+前面介绍的 source specification 远不止能描述数据来源：图层还可以做几何变换，显示范围也可以限定为具有某种 property selector 所描述属性的 Shape。
+
+几何变换以圆括号追加在层号/datatype 的 source specification 之后。变换的写法如下（各部分顺序任意）：
+
+\begin{lstlisting}
+( [<dx>,<dy>] [r<angle> | m<angle>] [*<mag>] )
+\end{lstlisting}
+
+例如 \ui{(r90)} 表示逆时针旋转 90 度；\ui{(0,100.0 m45 *0.5)} 则把版图缩到一半、沿 45 度轴翻转（即交换 x 与 y 轴），最后整体向上平移 100 微米。
+
+变换语法的详细说明见第 原文对应章节 节。
+
+变换会沿图层层次累加：若某图层自身带变换，同时它又位于某个也指定了变换的组代表节点之内，则最终变换是“先施加该图层的变换，再施加组代表的变换”。
+
+也可以同时给出多个变换，此时同一版图会以多个实例的形式显示。
+
+一个典型用法是按版图序号重新归组，并给属于某个版图的组代表指定变换，从而把多个版图对齐。
+
+property selector 写在方括号内。selector 用运算符 \kte{\&\&}、\kte{||}、\kte{!} 把若干形如 \kte{<prop>==<value>} 或 \kte{<prop>!=<value>} 的表达式组合起来，并允许用圆括号规定运算优先级：
+
+\begin{lstlisting}
+[ <expr> ]
+\end{lstlisting}
+
+在 GDS2 文件中，属性名总是整数，写作 \textbackslash{}\# 后接数字（例如 \ui{\#43}）；GDS 属性的值总是字符串，可以直接写成不加引号的文本原子，也可以用单引号或双引号括起。下面是 GDS 文件下一个合法的 property selector 示例：
+
+\begin{lstlisting}
+10/5 [#43==X]
+\end{lstlisting}
+
+用这个 source specification，图层只会显示第 10 层、datatype 5 上那些带编号为 43 且值为字符串“X”的 user property 的 Shape。再复杂一点的例子：
+
+\begin{lstlisting}
+10/5 [!(#43==X&&(#2==Y||#2==U))]
+\end{lstlisting}
+
+在 OASIS 文件中，属性名可以是字符串，此时 property selector 可以写作 \ui{[prop==X]}。此外属性值可以是整数或浮点数，这由写法本身区分：\ui{[prop==\#200]} 检查名为 prop 的属性是否具有整数值 200；类似地，\ui{[prop==\#\#0.5]} 检查 prop 是否为浮点值 0.5。
+
+property selector 会沿图层层次叠加：若组代表指定了一个 selector，组内某图层也指定了 selector，则只显示同时满足两者条件的 Shape。
+
+source 记法的总体说明见第 原文对应章节 节。
+
+\section{为单个图层或图层组指定层次层级}\label{sec:explicit_hier_levels}
+
+默认情况下只显示在层次层级选择框中选定的那些层级；也就是说，若选中 Levels 0 到 1，就只显示顶层 Shape 与 Instance。这个选择可以对某些图层或图层组单独修改。要给某个图层指定不同的层次选择，可使用 source specification 的可选组成部分——hierarchy level selector：
+
+\begin{lstlisting}
+#[<lower-level>][ .. <upper-level>]
+\end{lstlisting}
+
+上下层级都可以省略，省略时就沿用全局设置、不予覆盖。上层层级可以写 \ui{*}，表示一切可用的层级。若只写一个层级而没有 \ui{..}，则把它当作上层层级，下层设为 0。
+
+下面几个例子可以说明：
+
+\begin{lstlisting}
+#*
+\end{lstlisting}
+
+显示所有层次层级
+
+\begin{lstlisting}
+#0..1
+\end{lstlisting}
+
+只显示顶层
+
+\begin{lstlisting}
+#..5
+\end{lstlisting}
+
+把上层层级覆盖为 5
+
+\begin{lstlisting}
+#2..
+\end{lstlisting}
+
+把下层层级覆盖为 2
+
+\begin{lstlisting}
+#..*
+\end{lstlisting}
+
+把上层层级设为“所有层级”
+
+为了支持更多用法，该记法还提供了一些变体：层级不必只写一个数字，也支持下列写法：
+
+\begin{lstlisting}
+(1)
+\end{lstlisting}
+
+相对写法：层级 1 相对于当前 Cell 所在层级。在 \ui{Descend} 模式下结果会不同，此时当前 Cell 处于比上下文 Cell（被绘制的最顶层 Cell）更低的层级。
+
+\begin{lstlisting}
+<1
+\end{lstlisting}
+
+受限写法：层级 1，且若界面中设定的默认上/下层级更小，则取更小者。
+
+\begin{lstlisting}
+>1
+\end{lstlisting}
+
+受限写法：层级 1，且若界面中设定的默认上/下层更大，则取更大者。
+
+\begin{lstlisting}
+(>1)
+\end{lstlisting}
+
+组合写法：相对于当前 Cell 所在层级的层级 1，或取更小者。
+
+\begin{lstlisting}
+>*
+\end{lstlisting}
+
+等于当前设定的最大层次层级。
+
+例如：
+
+\begin{lstlisting}
+#(0)..(1)
+\end{lstlisting}
+
+当前 Cell 的顶层（在 \ui{Descend} 模式下同样有效）。
+
+\begin{lstlisting}
+#>0..<1
+\end{lstlisting}
+
+恰好位于顶层的一切，除非顶层在控件中未被选中。
+
+\begin{lstlisting}
+#>1..<*
+\end{lstlisting}
+
+上下文 Cell 顶层以下的一切，除非界面控件未选中这些层级。
+
+\begin{lstlisting}
+#(>1)..<*
+\end{lstlisting}
+
+同上，但相对于当前 Cell 而非上下文 Cell。
+
+\section{载入与保存图层集}\label{sec:load_save_layers}
+
+图层的显示属性可以用 \menu{File} 菜单中的 \ui{Save Layer Properties} 存到文件，之后用 \ui{Load Layer Properties} 重新载入。
+
+\section{截图}\label{sec:screenshots}
+
+要把画布存成 PNG 文件，从 \menu{File} 菜单选择 \ui{Screenshot}，或按 \kbd{Print} 键。随后弹出文件对话框，指定截图要保存到的文件。
+
+\section{进行测量}\label{sec:measure}
+
+在工具栏点击标尺图标，再从下拉选项中选择 \ui{Ruler} 即可测量。在版图中左键单击一个点，再左键单击一次或按 \kbd{Enter} 确定第二个点，就会画出标尺并显示所测距离。
+
+拖动端点时可以按住 Shift 或 Ctrl，或两者同时按。只按 Shift 时，标尺方向被限制为水平或竖直；只按 Ctrl 时，限制为水平、竖直或 45 度斜向；同时按 Ctrl 与 Shift 时不作方向限制。
+
+拖动标尺时，当前拖动距离会显示在版图视图顶部的三个输入框中。按 \kbd{Tab} 键可把输入焦点切到这些输入框，在其中输入距离的数值，用 \kbd{Tab} 与 \kbd{Shift+Tab} 在框间跳转，按 \kbd{Esc} 退出输入框。光标位于 \ui{dx} 或 \ui{dy} 框时按 \kbd{Enter} 会接受输入值并应用到标尺上。若在标为 \ui{d} 的最后一个框中输入数值并回车，标尺会进入“定长”模式。
+
+测量距离有一种便捷做法：单击测量标尺。在标尺图标的下拉选项中选 \ui{Measure}，此时单击一次即可在指定位置放置标尺。该功能会寻找标尺附近的边，把标尺接到相邻的边上，并使标尺垂直于起点旁的那条边。
+
+\ui{Measure Edge} 标尺类型同样是单击测量，但测的是单击位置处一条边的长度。
+
+选择 \ui{Cross} 标尺类型，单击一次即可标记一个位置，标尺会显示该处的 x、y 坐标。
+
+\ui{Multi-Ruler} 可以把多条标尺串成一个对象。单击第一点开始，再单击更多点继续添加分段；每一段都以独立的标尺显示，带刻度和长度。双击或按 \kbd{Enter} 结束。注意标尺标签给出的是各分段的长度；若要显示累计长度（所有分段长度之和），把标尺的标签格式从 \ui{\$D} 改为 \ui{\$DD}（\ui{DD} 是表示累计长度的变量）。详见第 \ref{sec:ruler_properties} 节。
+
+\ui{Angle} 标尺用于测角：需要单击三次，定义两条呈“V”形排布的标尺，标尺上显示这两条线所夹的角度。
+
+另一种特殊标尺是 \ui{Radius}，同样需要三次单击：三个点定义一个圆，标尺显示该圆的半径与圆周。
+
+\ui{Box} 与 \ui{Ellipse} 标尺与普通标尺一样是两点式，但显示由两点张成的矩形或椭圆。对这两种标尺，移动第二点时 Shift 与 Ctrl 的含义不同：按 Shift 时第一点成为矩形或椭圆的中心；按 Ctrl 时矩形被约束为正方形、椭圆被约束为圆；两键可同时按。凡使用 box 或 ellipse 轮廓样式的标尺都遵循这一规则。
+
+标尺的配置方式很多。从 \menu{Edit} 菜单打开 \kte{Rulers And Annotations Setup} 即可配置。勾选 \kte{Snap to edge/vertex} 可让标尺吸附到对象的边或顶点；用 \kte{Angle Constraint} 选项可约束标尺方向；用 \kte{Limit number of annotations} 可限制标尺数量。
+
+在画标尺或移动某个端点时，可以用 Shift 与 Ctrl 临时改变方向约束：按住 Shift 强制正交，按住 Ctrl 强制斜向，两者同按则解除一切方向约束。在画 Box 或 Ellipse 标尺时，这两个键改为让标尺居中或约束为正方形/圆（见上）。
+
+\menu{Edit} 菜单中的 \ui{Clear all rulers} 可清除所有标尺。
+
+拖动标尺的过程可以用 \kbd{Esc} 键或 \menu{Edit} 菜单中的 \ui{Cancel} 取消。
+
+用工具栏上的 speedbar 按钮切到 \ui{Move} 模式，或从 \menu{Edit} 菜单的 \menu{Mode} 子菜单选 \ui{Move}，即可移动标尺：左键单击并拖动标尺本身或其某个端点。
+
+在 \ui{Select} 模式下选中某个标尺后按 \kbd{Delete}，可以单独删除它。
+
+标尺可以做出各种变化，例如显示成箭头。要编辑标尺属性，双击该标尺，或选中它后用 \menu{Edit} 菜单中的 \ui{Properties}。属性说明见第 \ref{sec:ruler_properties} 节。
+
+可以为标尺配置多个模板，每个已定义的模板都会出现在 \ui{Ruler} 模式工具栏按钮的下拉菜单中。选中某个模板后，由它产生的新标尺会继承该模板的属性。模板在标尺设置页（\menu{File} 菜单的 \ui{Setup}）或 \menu{Edit} 菜单的 \ui{Ruler And Annotation Setup} 中管理。
+
+\section{标尺属性}\label{sec:ruler_properties}
+
+以下是标尺可配置的属性：
+
+\begin{itemize}
+\item Labels（标签）：随标尺轮廓不同，最多可有三处标签，每处都可单独指定显示一段文字还是测量值。主标签总是存在；只有当标尺具有明确的竖直或水平分量时，X 与 Y 标签才出现（\ui{diagonal} 之外的所有轮廓样式都满足）。主标签可指定位置（\ui{P} 设置）：可放在第一点、第二点或标尺中点。标签的对齐方式也可指定：左对齐、右对齐或居中。
+\item Style（样式）：决定标尺及其各部件如何绘制，可以是“带刻度的尺状”、箭头样式、普通直线，或在两端带十字标记。
+\item Outline（轮廓）：决定构成标尺的两点之间如何连成标尺形状，可以只是一条直线（\ui{diagonal}），也可以是水平线与竖直线（部分轮廓样式会再叠加斜线），或由两点张成的矩形。还有一种特殊轮廓：\ui{ellipse}，即在两点张成的矩形内画椭圆。
+\item Angle constraint（角度约束）：可以用多种方式限制标尺朝向，例如只允许水平。默认情况下标尺沿用全局设置，也可以让它自带独立的约束。
+\item Mode（模式）：普通模式下需要两下单击，分别确定第一点与第二点；\kte{Single click} 模式下单击一次即把两点设在同处；\kte{Auto measure} 模式下则会在单击点附近寻找边，据此自动调整两点。
+\item Never snap to objects：勾选后标尺绝不吸附到绘制对象上，即使全局选项已打开。
+\end{itemize}
+
+Label format（标签格式）是一段任意文字，其中可嵌入表示测量值的表达式。表达式以美元符号开头，后接表达式字符串。表达式语法支持基本运算（\ui{*}、\ui{/}、\ui{+}、\ui{-} 等）、位运算（\ui{|}、\ui{\&} 等）、条件运算符（\ui{x:y?z}），以及 \ui{abs}、\ui{sqrt}、\ui{exp} 等函数，还包含 \ui{sprintf} 函数。示例如下：
+
+\begin{itemize}
+\item \ui{\$X}：变量 X 的值（水平距离，变量全表见下）。
+\item \ui{\$(sprintf('\%.2f',X))}：把变量 X 格式化为两位小数，\ui{sprintf} 的用法与同名标准 C 函数一致。
+\item \ui{\$(abs(X)+abs(Y))}：标尺的曼哈顿距离。
+\item \ui{\$min(X,Y)}：X 与 Y 中的较小者。
+\item \ui{\$(X) (\$Y)}：先 X 的值，再括号中的 Y 值，结果形如“2.5 (-0.5)”。注意不能直接写 \ui{\$X (\$Y)}，因为表达式求值会把它读成调用名为 X 的函数。
+\end{itemize}
+
+表达式语法与可用函数的说明见第 原文对应章节 节。
+
+可用变量如下：
+
+\begin{itemize}
+\item \ui{D}：标尺长度，单位微米。
+\item \ui{L}：标尺的曼哈顿长度，单位微米。
+\item \ui{U}：标尺第一点的 x 坐标，单位微米。
+\item \ui{V}：标尺第一点的 y 坐标，单位微米。
+\item \ui{P}：标尺第二点的 x 坐标，单位微米。
+\item \ui{Q}：标尺第二点的 y 坐标，单位微米。
+\item \ui{X}：标尺的水平延伸量，单位微米。
+\item \ui{Y}：标尺的竖直延伸量，单位微米。
+\item \ui{A}：标尺所围面积（若视为矩形），单位平方毫米。
+\item \ui{G}：标尺首段与末段所夹角度（用于量角标尺）。
+\end{itemize}
+
+对 multi-ruler 还提供表示“累计”值的额外变量，即相应数值到所指分段为止的和：
+
+\begin{itemize}
+\item \ui{DD}：到被标注分段为止的所有长度之和。
+\item \ui{LL}：到被标注分段为止的所有曼哈顿长度之和。
+\item \ui{XX}：第一点到当前点的水平距离。
+\item \ui{YY}：第一点到当前点的竖直距离。
+\end{itemize}
+
+\section{添加图像}\label{sec:images}
+
+某些应用需要把平面的像素数据与版图一起显示，例如拍摄的 SEM 图像，或某个仿真工具的输出。KLayout 提供了把图像加入显示、并置于所绘版图之下显示的方法。
+
+目前可以读取 Qt 支持的各类常见图像格式（如 PNG、JPG、TIF 等），彩色与单色图像均支持。图像在内部以浮点矩阵存储，也可以用 RBA 编写自定义导入器。
+
+要添加图像，使用 \menu{Edit} 菜单中的 \ui{Add Image}，会弹出图像属性对话框，在其中指定图像；点击文件名框旁的 \ui{Browse} 按钮选择文件。
+
+图像有若干属性，主要影响其显示方式：
+
+\begin{itemize}
+\item Pixel size：单个像素的尺寸，单位微米。这决定了图像的整体大小。
+\item Center：图像中心放置的位置（单位微米）。
+\item Rotation：图像旋转的任意角度。
+\item Shear/Perspective Tilt：斜切与透视倾斜角。虽然可以直接指定这些角度，但要使图像与版图对齐，用 landmark 调整功能要容易得多。
+\item Mirror flag：勾选后，图像在旋转之前先沿底边镜像。
+\item Pixel value range：对应最小与最大的像素值。常见的 8 位图像格式中这两值为 0 与 255；调整它们可以让图像变亮或变暗。对浮点图像（例如仿真数据），该范围应取输出值的边界，例如归一化数据取 0.0 与 1.0。
+\item Color mapping：对单色图像，像素值通过映射函数转成颜色。图像属性页中有一个标签专门用于定义数据值到颜色的任意映射：在数据范围轴上放置颜色取样点，并给它们指定颜色。在轴上双击可新建取样点，单击选中后可在取色框中调整其颜色；选中后按 \kbd{Del} 可删除取样点。
+\item Brightness、Contrast 与 Gamma：对应标签页上各有三个滑块用于调整。
+\item RGB channel gains：此外，各颜色通道还可以在对应标签页上乘以给定的权重系数。
+\end{itemize}
+
+图像放置好之后，可以用 \ui{Move} 功能移动与缩放。要调整图像属性，使用 \menu{Edit} 菜单中的 \ui{Properties}，或双击该图像。
+
+自 0.22 版起还可以定义 landmark：在图像上任意位置设点，把这些点拖到版图中对应的目标位置即可完成对齐。详见第 \ref{sec:landmarks} 节。
+
+版图视图中可以放置任意数量的图像。要把这套配置存下来，使用 \menu{File > Save Session} 保存会话。
+
+\section{用 landmark 对齐图像}\label{sec:landmarks}
+
+landmark 是图像上的任意位置。可以在图像上以图形方式定义这些位置，然后在版图视图中把它们当作把柄（handle），把图像与版图对齐。视所定义的 landmark 数量，该功能可以补偿图像的平移，乃至旋转、斜切甚至透视畸变。
+
+landmark 在 landmark 编辑器中定义。在图像属性对话框中按 \ui{Define} 按钮即可打开 landark 编辑器。
+
+landmark 编辑器左侧显示图像，右侧列出已定义的 landmark。可以用与 KLayout 版图视图相同的方式在图像视图上缩放（滚轮、鼠标中键、右键框选）。
+
+要添加 landmark，选择 \ui{Add} 模式，然后在想要的位置单击，图像上会出现一个小“靶心”十字作为标记。要删除 landmark，选择 \ui{Delete} 模式并单击该 landmark；也可以先在列表中选中，再进入 Delete 模式，此时当前选中的 landmark 会被删除。
+
+要移动 landmark，进入 \ui{Move} 模式后移动它。注意移动遵循 KLayout 的“取放”（pick and place）规则：需用鼠标单击两次，一次拾取、一次放下。这样做的好处是拾起 landmark 的过程中仍可缩放。
+
+定义超过 4 个 landmark 意义不大，因为再多变换就过定了。为了精度，应挑选覆盖较大范围的 landmark 位置：彼此不能太近，且三个 landmark 不应共线。
+
+视 landmark 数量，KLayout 可调整以下图像参数：
+
+\begin{kldesc}
+\item 1 个 landmark：平移
+\item 2 个 landmark：平移、旋转与缩放
+\item 3 个 landmark：平移、旋转、缩放与斜切
+\item 4 个 landmark：平移、旋转、缩放、斜切与透视畸变
+\end{kldesc}
+
+定义好 landmark 之后，就可以用它们调整图像的显示变换：在 KLayout 中进入 \ui{Move} 模式，鼠标移到图像上时 landmark 符号会显现，可用鼠标拾取。拾起某个 landmark 并移动鼠标时，KLayout 会相应调整图像变换，并按新变换显示图像外框；放下 landmark 后，图像即按此变换呈现。
+
+视 landmark 数量，KLayout 可以只调整部分变换参数或全部，使其它 landmark 保持在原位。某些场合这未必是想要的：例如定义了 4 个 landmark 却只移动其中一个，结果可能出现极端的透视畸变。通常的做法是先粗调位置与放大倍率，最后才用透视变换细调。
+
+因此 KLayout 允许在拖动 landmark 时降低变换的自由度，可用的修饰键如下：
+
+\begin{kldesc}
+\item Shift：只调整平移
+\item Ctrl：调整平移、旋转与缩放
+\item Shift+Ctrl：调整平移、旋转、缩放与斜切
+\end{kldesc}
+
+\section{浏览 Shape}\label{sec:browse_shapes}
+
+有一个简单的 Shape 浏览器，可以浏览某图层上的所有 Shape。在 layer 列表中选中要浏览的图层，再从 \menu{Tools} 菜单选择 \ui{Browse shapes}。
+
+弹出的浏览器对话框列出 Cell、Shape 与 Cell Instance。选中某个 Cell 后，中间列表显示该 Cell 中的所有 Shape，右侧列表显示该 Cell 相对于顶层 Cell 的各个 Instance。
+
+选中某个 Shape 时，版图画布会在它周围画一个标记框并缩放到该 Shape。Shape 的显示方式可以在该对话框的 \ui{Configure} 标签页中，或在 \menu{Setup} 对话框的相应页中配置。
+
+另一个可用来检查 Shape 的功能是 \ui{Search and replace}（见第 \ref{sec:search_replace} 节）。
+
+\section{浏览 Instance}\label{sec:browse_instances}
+
+要浏览某个 Cell 的全部 Instance，在 Cell 列表选中该 Cell（不必把它设为新的顶层），再从 \menu{Tools} 菜单选择 \ui{Browse instances}。弹出的简单 Instance 浏览器会列出该 Cell 被实例化在哪些 Cell 中，以及实例化的方式。
+
+另一个可用来检查 Instance 的功能是 \ui{Search and replace}（见第 \ref{sec:search_replace} 节）。
+
+\section{marker 浏览器}\label{sec:marker_browser}
+
+KLayout 提供了一套通用机制来保存错误标记（error marker）或相关信息，称为 report database（RDB）。一个版图视图可以关联任意多个 report database；通常每个数据库对应一个版图，但这并非硬性要求。
+
+report database 首先是一个通用“值”（value）的集合，值可以是字符串或其它条目。通常一个 value 是一组几何对象的集合，用来标出某个位置或某段绘制几何。若干这样的 value 构成一个 marker item。report database 再把这些 marker item 与附加信息关联起来：
+
+\begin{itemize}
+\item Tags：表示特定状况的标志。marker 浏览器使用几个预定义标签，如 \ui{important}、\ui{waived} 与 \ui{visited}，用户可设置或清除它们，以表示某个 marker item 被认为重要、或该错误已被豁免。
+\item Image：marker 可以附上一张截图，供文档记录之用。
+\end{itemize}
+
+marker item 按 category 组织，每个 marker item 必须属于某个 category。category 本身也可以分层，即拆成子 category，从而更好地组织归类。
+
+marker item 通常关联到某个 Cell，即发现错误的位置所在。默认情况下 marker item 直接关联到顶层 Cell。
+
+report database 使用基于 XML 的专有格式，能够保存数据库所提供的各项标注。不过也可以导入 Calibre DRC 的 ASCII 格式文件。
+
+marker 浏览器用来浏览与某个视图关联的 report database，可从 \menu{Tools} 菜单中的 \ui{Marker Browser} 启动。它会跟踪某个 marker 是否已被查看过，类似邮件客户端的“已读”标记，从而便于跟踪一次复核进度；\ui{visited} 状态会写入数据库文件。
+
+在 marker 浏览器中，用 \ui{Open} 按钮载入 XML 数据库文件或导入其它格式的文件；\ui{Reload} 重新载入文件；\ui{Save As} 把数据库写成 XML 格式。
+
+marker 浏览器提供三个面板：
+
+\begin{itemize}
+\item Directory：列出数据库中的 category 与 Cell。尚有未查看 marker 的 category 或 Cell 以粗体显示，完全没有 marker 的则以绿色显示。在目录的上下文菜单中取消勾选 \ui{Show All} 可以把后者隐去。点击计数列的标题可按 marker 数量排序。可以选中多个 category 或 Cell，此时 markers 面板会显示所有选中项的 marker。
+\item Markers：列出所选 category 和/或 Cell 中的 marker。列表长度有限制，可在配置页（marker 浏览器上的 \ui{Configure} 按钮，或 setup 对话框）中修改。各种 tag 也在此面板中显示。点击相应标题可对列表按多种方式排序。选中某个 marker 时，若关联了合适的版图，该 marker 会在版图中高亮；高亮方式以及视图如何调整可在配置页中指定。
+\item Info：汇总所选 marker 的信息。若该 marker 附有截图，会在此显示；点击缩略图可在单独窗口中按原始尺寸查看。
+\end{itemize}
+
+与 Shape、Instance 浏览器类似，marker 浏览器也提供导航按钮，用于跳到下一个 marker、category 或 Cell。
+
+marker 浏览器支持 tagged value：每个 marker 都可关联一个带名字的值。这类值可从 RVE 文件导入，在那里它们被称为 properties。tagged value 由特定生成器产生，可以表示测量值之类。存在 tagged value 时，它们会显示在 markers 列表中；点击相应的列标题即可按这些值排序。
+
+\section{technology 管理}\label{sec:technology_manager}
+
+KLayout 0.22 的新功能之一是 technology management。它涵盖那些需要对版图做出特定解释的功能，尤其是给版图图层赋予物理含义，例如 CMOS 工艺中的 via 层、有源区层。这种解释往往取决于产品将用哪种工艺制造，因此“能够提供多套配置”这一能力被统称为 technology management。
+
+\menu{Tools} 菜单中的 \ui{Technology Manager} 是用于新建、删除与编辑 technology 配置的用户界面。详见第 \ref{sec:technology_manager} 节。
+
+\section{选择标尺、Shape 与 Instance}\label{sec:selecting}
+
+在 \ui{Select} 模式下单击标尺、图片、Shape 或 Instance 即可选中它；也可以按住鼠标左键拖出选择矩形，此时矩形内的所有对象都会入选。
+
+选择 Shape、Instance 或其他对象时，按 Shift 会在当前选择基础上扩展，按 Ctrl 会把指定对象从选择中移除。
+
+对于版图对象（Shape 与 Instance），既可以穿透层次选择，也可以只在当前 Cell 这一层选择（仅顶层对象）。默认是穿透层次选择，也就是说子 Cell 中的对象也能被选中；当同一个 Cell 被多次实例化时，同一个对象可能被重复选中。虽然能够编辑子 Cell 内部的对象有时很方便，但最终可能带来令人困惑的结果，因此只处理顶层（即当前 Cell）往往更直观。要启用仅顶层模式，勾选 \menu{View} 菜单里的 \ui{Select Top Level Objects Only} 菜单项，或在编辑模式选项对话框（\kbd{F3}）中做同样的设置。
+
+在仅顶层模式下，只有当 Cell 具有可见外观时，其上的 Instance 才能被选中：例如该 Cell 在某个可见图层上至少含有一个 Shape。若相对于当前可见图层而言它是空的，就无法被选中。如果因为所显示的层次层级被限制在足够小的一段区间内而显示出 Cell 的边框，那么这些 Cell Instance 总是可以被选中。
+
+图片和标尺比较简单，它们不嵌入层次结构，单击它们或把它们框进选择框即可选中。
+
+打开属性对话框可以查看对象属性（在允许的情况下也可以修改）。要查看或修改所选对象的属性，从 \menu{Edit} 菜单选择 \ui{Properties}，随后弹出的对话框会显示第一个选中对象的属性。按 \ui{Next} 前进到下一个对象，按 \ui{Previous} 回到上一个对象。
+
+根据当前应用模式不同，所选对象的属性也可能允许修改。要把改动应用到当前对象，选 \ui{Apply}；要应用改动并关闭对话框，选 \ui{Ok}；要把改动应用到当前对象以及所有同类选中对象，选 \ui{Apply To All}（若该按钮可用）；不应用任何改动直接关闭对话框，选 \ui{Cancel}。
+
+\ui{Apply To All} 会以某种智能方式把改动套到其它对象上。例如对 Box 而言，尺寸的改动会以与当前对象相同的方式（四个方向上的同等偏移）施加；若改的是 Path 的宽度，则同样的宽度会套到其余所有 Path 上，依此类推。
+
+对于 Shape 和 Instance，也可以编辑 user properties（用户属性）。user properties 是任意挂在 Shape 或 Instance 上的属性，由一个 key（键，为兼容 GDS2 最好用数字）和一个 value（值，在 GDS2 中最好是字符串）组成；一个对象上可以挂多条这样的属性。点击 \ui{User Properties} 按钮可打开专门编辑这类属性的对话框。若该对话框以 \ui{Ok} 关闭，user properties 会被保留下来，但要等到按下 \ui{Apply} / \ui{Ok} 或 \ui{Apply To All} 之后才真正写入版图对象；其中 \ui{Apply To All} 会把新属性套用到其余同类 Shape 上。
+
+最后，对于 Shape 和 Instance，点击 \ui{Instantiation} 按钮可以显示该 Shape 或 Instance 的实例化路径。
+
+通过属性对话框不能改变 Shape 所在的图层。要把 Shape 移到别的图层，请使用 \menu{Edit} 菜单下 \menu{Selection} 子菜单中的 \ui{Change Layer}。
+
+\section{更多配置选项}\label{sec:setup}
+
+从 \menu{File} 菜单的 \ui{Setup} 可打开选项对话框，其中提供大量配置选项，从背景设置到标尺配置都有。
+
+例如在该对话框中可以编辑调色板，以便使用不同的颜色，也可以配置填充图案（stipple）调色板。此外还可以定义这些颜色或填充图案初始分配给图层时的顺序，以及哪些颜色不用于给图层上色。
+
+其中特别有用的一项是 oversampling（过采样）。过采样是为了提升画面质量：先以更高分辨率渲染，再降采样到屏幕分辨率，效果是线条显得更细、细节分辨得更清楚。目前的副作用是填充图案会变得更细，marker 模式下的十字也更小，不过清晰度提升相当可观。
+
+过采样可在 setup 对话框的 \ui{Display/General} 页启用，提供 2× 与 3× 两档。下面几张截图展示过采样的效果：
+
+\begin{kldesc}
+\item 常规（1×）
+\end{kldesc}
+
+\begin{kldesc}
+\item 2× 过采样
+\end{kldesc}
+
+\begin{kldesc}
+\item 3× 过采样
+\end{kldesc}
+
+\section{撤销与重做}\label{sec:undo_redo}
+
+大多数操作（例如修改图层颜色）都可以用 \menu{Edit} 菜单中的 \ui{Undo} 撤销；相应地，也可以用 \menu{Edit} 菜单中的 \ui{Redo} 重做。
+
+\section{保存版图或其局部}\label{sec:save}
+
+版图或其中的某个子 Cell 都可以存成 GDS2 或 OASIS。要保存整个版图，从 \menu{File} 菜单选择 \ui{Save As}；要只保存某个 Cell，在 Cell 树中选中它（不必是当前显示的那个），然后在 Cell 树的上下文菜单（右键单击）中选择 \ui{Save Current Cell As}。
+
+随后弹出文件对话框，指定要把该 Cell 或版图写入的文件名。选好文件后会出现选项对话框，用来指定更多选项，例如可以把保存范围限制在部分图层上（如只保存可见图层），也可以修改数据库单位（database unit），或按给定系数缩放版图。
+
+对 OASIS 可以指定压缩级别。级别 0 时基本不做压缩尝试；级别更高时会先对 Shape 分类，再尝试阵列压缩。级别越高，把 Shape 压成阵列的尝试越多。尤其对平坦的版图，压缩 Shape 需要一定内存，并会显著拖慢 OASIS 写入。
+
+\section{保存与恢复会话}\label{sec:session}
+
+会话（session）可以保存，之后再恢复。一个 session 包含已加载的文件、bookmark、标注、layer 设置、层次设置、图像以及应用配置。session 以 XML 文件形式保存，后缀为 \ui{.lys}。
+
+要保存 session，从 \menu{File} 菜单选择 \ui{Save Session}；要恢复，选择 \ui{Restore Session}。也可以在命令行用 \ui{-u} 选项后接 session 文件来启动 KLayout。在 Windows 上，session 文件已注册为由 KLayout 自动打开。
+
+\section{其它视图选项}\label{sec:view_options}
+
+\menu{View} 菜单还提供一些调整显示方式的选项：
+
+\begin{itemize}
+\item \ui{Show Grid}：对应配置项的快捷入口。取消勾选后不显示网格线与比例尺。
+\item \ui{Grids}：该子菜单可快速切换当前网格设置，可从 setup 对话框 \ui{Application} 部分的 \ui{Default Grids} 页中配置的若干默认网格中挑选。网格主要用于编辑几何图形，若标尺配置了吸附，也用于标尺吸附。
+\item \ui{Show Texts}：取消勾选时不绘制文字，这对 Text 对象与 user properties 都适用。不绘制文字时绘制速度会快一些。
+\item \ui{Show Cell Frames}：取消勾选时，被隐藏的 Cell 以及超出所选层次层级的 Cell，其边框不再绘制。
+\item \ui{Show Layers Without Fill}：勾选后 Shape 不带填充绘制，版图呈线框状。该选项本意是临时关闭填充图案；若一直勾选着会令人困惑，因为此时设置填充图案可能毫无效果。
+\item \ui{Synchronized Views}：勾选后主窗口中所有视图（标签页）同步，即显示版图的同一区域。当为了清晰而把两个版图放在不同视图中、又需要比对相同区域时，这个选项很有用。
+\item \ui{Select Top Level Objects}：对应编辑器选项的快捷入口。勾选后只选中顶层对象。这对编辑尤为重要，因为编辑子 Cell 会在该 Cell 被实例化的其它位置产生连带影响，而那里本来并不打算改动。
+\item \ui{Toolbar}、\ui{Navigator} 等：分别启用或禁用对应的工具窗口。
+\item \ui{Highlight Object Under Mouse}：勾选后，鼠标悬停的对象会被临时高亮。由于这在少数情况下会造成困惑，该菜单项只是提供这个配置项的快捷入口。
+\end{itemize}

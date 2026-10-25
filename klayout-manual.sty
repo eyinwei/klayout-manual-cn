@@ -1,0 +1,305 @@
+% ---------------------------------------------------------------------------
+%  KLayout 手册中文版 · 样式文件
+%  · 编译：XeLaTeX
+%  · 字体用 TeX Live 自带 Fandol，不依赖系统字体
+%  · 术语一律保留英文原词（Layer View / Cell / Flatten 等不译），
+%    叙述文字译中文；界面文字、命令、参数同样保留英文
+% ---------------------------------------------------------------------------
+\NeedsTeXFormat{LaTeX2e}
+\ProvidesPackage{klayout-manual}[2026/10/25 v0.3 KLayout manual CN style]
+
+% ---------- 页面 ----------
+\RequirePackage{geometry}
+\geometry{a4paper,left=2.6cm,right=2.6cm,top=2.8cm,bottom=2.6cm}
+% 装不下的行允许整体放宽断行（避免中文行里的长英文盒子顶出右边界）
+\setlength{\emergencystretch}{1.5em}
+
+% ---------- 颜色 ----------
+\RequirePackage{xcolor}
+\definecolor{klBlue}{HTML}{378EB2}      % 原手册链接色，用于章标题与链接
+\definecolor{klInk}{HTML}{1F2A33}       % 正文近黑
+\definecolor{klGray}{HTML}{6B6B6B}
+\definecolor{klRule}{HTML}{B8C2CC}      % 分隔线、图注
+
+% 标题色阶：章（深）→ 节（中）→ 小节（浅）→ 细目（灰）
+\definecolor{klH1}{HTML}{14384F}
+\definecolor{klH2}{HTML}{1F5F80}
+\definecolor{klH3}{HTML}{2C7396}
+\definecolor{klH4}{HTML}{4A5560}
+
+% 框体配色：标题条底色 + 正文底色 + 边框色
+\definecolor{klNoteHead}{HTML}{2F6F4F}
+\definecolor{klNoteBody}{HTML}{F2F8F3}
+\definecolor{klNoteEdge}{HTML}{8FB8A0}
+
+\definecolor{klUIHead}{HTML}{5A6470}
+\definecolor{klUIBody}{HTML}{F7F8FA}
+\definecolor{klUIEdge}{HTML}{A9B2BD}
+
+\definecolor{klCmdHead}{HTML}{25566E}
+\definecolor{klCmdBody}{HTML}{FAFCFD}
+\definecolor{klCmdEdge}{HTML}{7FAEC2}
+
+\definecolor{klHintBg}{HTML}{F2F8F3}
+\definecolor{klUIBg}{HTML}{F7F8FA}
+\definecolor{klCodeBg}{HTML}{F5F7F9}
+
+% ---------- 依赖 ----------
+\RequirePackage{listings}
+\RequirePackage{enumitem}
+\RequirePackage{graphicx}
+\RequirePackage{caption}
+\RequirePackage{tcolorbox}
+\tcbuselibrary{skins,breakable}
+\RequirePackage{hyperref}
+\hypersetup{
+  colorlinks=true,
+  linkcolor=klBlue,
+  urlcolor=klBlue,
+  citecolor=klBlue,
+  pdftitle={KLayout 用户手册（中文版）},
+  pdfauthor={Matthias K\"offerlein（原著）；本文件为非官方中文译本}
+}
+
+% ---------- 行内标记 ----------
+% 界面元素（菜单项、按钮、下拉选项、对话框控件）：细边框 + 浅底，便于识别“可点击”
+% 框前后允许断行，长按钮名不会把整行顶出右边界
+% ---------- 界面命令框配色：蓝框浅蓝底，醒目区分“可点击” ----------
+\definecolor{klUIBox}{HTML}{3B7EA1}
+\definecolor{klUIFill}{HTML}{EAF3F8}
+% 框前后允许断行：罚分取较低值，让 TeX 优先在框边界换行而不是把行内拉松
+\newcommand{\ui}[1]{\penalty100\uibox{#1}\penalty100}
+\newcommand{\uibox}[1]{%
+  \begingroup
+  \setlength{\fboxsep}{1.2pt}%
+  \fcolorbox{klUIBox}{klUIFill}{\small\klbktxt{#1}}%
+  \endgroup
+}
+% 等宽文本允许在框内换行：单词间允许断行 + 宽松断行参数
+\makeatletter
+\newcommand{\klbktxt}[1]{{\ttfamily
+  \spaceskip=0.3333em
+  \doublehyphendemerits=0
+  \finalhyphendemerits=0
+  \lefthyphenmin=1 \righthyphenmin=1
+  \emergencystretch=3em
+  #1}}
+\makeatother
+% 关键：允许在 ui 框（fcolorbox）之前换行——LaTeX 默认把 \fcolorbox 视作不可断盒子，
+% 前后 penalty 已在 \ui 定义中给出（penalty999）
+\makeatletter
+% 菜单路径，如 View > Navigator：按 > 切开，每一项都带框
+% 每项之间允许断行（\linebreak 零罚分），避免长路径溢出
+\newcommand{\menu}[1]{%
+  \kl@nextitem#1>\kl@stop}
+\def\kl@nextitem#1>#2\kl@stop{%
+  \ifx\relax#2\relax
+    \ui{#1}%
+  \else
+    \ui{#1}\penalty100\hspace{0.15em}\penalty100\textgreater\penalty100\hspace{0.15em}\penalty100\kl@nextitem#2\kl@stop
+  \fi}
+\makeatother
+% 快捷键
+\newcommand{\kbd}[1]{\fbox{\small\texttt{#1}}}
+% 术语：保留英文原词，首次出现时用 \klterm{Cell}{单元} 括注中文
+\newcommand{\klterm}[2]{#1（#2）}
+% 等宽正文引用（无框）：不用逐字符弹簧（会劫持段首断行），
+% 只允许在空格与斜杠处断行，其余交给 \emergencystretch
+\newcommand{\kte}[1]{\texttt{\allowbreak #1\allowbreak}}
+\newcommand{\kteslash}{\allowbreak/\allowbreak}
+
+% ---------- 列表统一缩进 ----------
+% itemize：标签(圆点)与续行对齐，说明文字起点即列表左界；enumitem 全局收紧
+\setlist[itemize]{leftmargin=1.8em, itemindent=0em, labelsep=0.5em,
+  itemsep=2pt, parsep=0pt, topsep=3pt}
+
+% ---------- 定义列表（术语式条目，用于“XX：说明”） ----------
+\newenvironment{kldesc}
+  {\begin{list}{}{\setlength{\leftmargin}{1.2em}\setlength{\itemindent}{-1.2em}%
+                 \setlength{\labelwidth}{0pt}\setlength{\labelsep}{0pt}%
+                 \setlength{\itemsep}{2pt}\setlength{\parsep}{2pt}}}
+  {\end{list}}
+
+% ---------- 代码 ----------
+% 语法高亮配色：关键字/注释/字符串/数字
+\definecolor{klKw}{HTML}{067D17}      % 关键字：绿
+\definecolor{klCmt}{HTML}{8E8E8E}     % 注释：灰
+\definecolor{klStr}{HTML}{C41A16}     % 字符串：红
+\definecolor{klNum}{HTML}{0B6CB3}     % 数字：蓝
+\lstdefinestyle{klcode}{
+  backgroundcolor=\color{klCodeBg},
+  basicstyle=\ttfamily\small,
+  breaklines=true,
+  columns=fullflexible,
+  keepspaces=true,
+  showstringspaces=false,
+  frame=single,
+  rulecolor=\color{klGray!40},
+  framesep=4pt,
+  xleftmargin=6pt,
+  xrightmargin=6pt,
+  aboveskip=6pt,
+  belowskip=6pt,
+  keywordstyle=\color{klKw}\bfseries,
+  commentstyle=\color{klCmt}\itshape,
+  stringstyle=\color{klStr},
+  numberstyle=\color{klNum},
+  morekeywords={input,output,report,target,source,connect,connect_global,
+    connect_implicit,connect_explicit,soft_connect,soft_connect_global,
+    extract_devices,compare,deep,flat,align,blank_circuit,flatten_circuit,
+    split_gates,make_toplevel_pins,purge,purge_nets,combine_devices,
+    report_lvs,report_netlist,target_netlist,schematic,netlist,tolerance,
+    same_nets,same_circuit,same_device_classes,ignore_parameter,
+    enable_parameter,disable_parameter,log,error,profile,tiles,threads,
+    and,or,not,xor,join,if,else,end,def,require,true,false,nil,
+    layout,cell,select,clip,labels,polygons,sized,merged,edges,
+    width,space,separation,notch,isolated,enclosing,enclosed,overlap,
+    drc,new_report,new_target,write_spice,with_comments,use_net_names,
+    max_res,min_caps,flag_mismatched_nets,mos3,mos4,mos4_class,
+    resistor,capacitor,diode,bjt3,bjt4,polygon_layer,edge_pair_layer,
+    select_props,map_props,nets,props_eq,props_ne,props_copy}
+}
+\lstset{style=klcode}
+
+% ---------- 样式框（提示与注意已合并为一类） ----------
+% 提示 / 注意 / 警告：绿色系，与正文区分明显
+\newtcolorbox{klNote}[1][提示]{
+  breakable, enhanced, colback=klNoteBody, colframe=klNoteEdge,
+  colbacktitle=klNoteHead, coltitle=white,
+  boxrule=0.4pt, arc=2pt, left=6pt, right=6pt, top=4pt, bottom=4pt,
+  fonttitle=\small\bfseries, title=#1
+}
+% 界面元素说明 —— 框内保留英文原文
+\newtcolorbox{klUI}[1][界面]{
+  breakable, enhanced, colback=klUIBody, colframe=klUIEdge,
+  colbacktitle=klUIHead, coltitle=white,
+  boxrule=0.4pt, arc=2pt, left=6pt, right=6pt, top=4pt, bottom=4pt,
+  fonttitle=\small\bfseries, title={#1（原文保留）}
+}
+% 命令 / 脚本示例
+\newtcolorbox{klCmd}[1][命令示例]{
+  breakable, enhanced, colback=klCmdBody, colframe=klCmdEdge,
+  colbacktitle=klCmdHead, coltitle=white,
+  boxrule=0.4pt, arc=2pt, left=6pt, right=6pt, top=4pt, bottom=4pt,
+  fonttitle=\small\bfseries, title=#1
+}
+
+% ---------- 图 ----------
+% 单张图最大高度：超过这个高度会与正文争版面，导致整页只剩一张图
+\newlength{\klfigmaxh}
+\setlength{\klfigmaxh}{0.45\textheight}
+\captionsetup{font=small,labelfont={bf,color=klGray},justification=centering}
+% \klfig[最大宽度]{文件名}{中文图注}
+% 宽高同时受限，按比例缩放，避免图片高过版面而被单独推到一页
+\RequirePackage{adjustbox}
+\newcommand{\klfig}[3][0.9\textwidth]{%
+  \begin{figure}[!htbp]
+  \centering
+  \adjustimage{max width=#1,max height=\klfigmaxh,keepaspectratio,center}{#2}%
+  \caption{#3}
+  \end{figure}
+}
+% 连续两张图并排，避免每图各占一页
+% \klfigpair{甲图}{甲注}{乙图}{乙注}
+\newcommand{\klfighalfh}{0.40\textheight}
+\newcommand{\klfigpair}[4]{%
+  \begin{figure}[!htbp]
+  \centering
+  \begin{minipage}[t]{0.48\textwidth}\centering
+    \adjustimage{max width=\linewidth,max height=\klfighalfh,keepaspectratio}{#1}%
+    \captionof{figure}{#2}
+  \end{minipage}\hfill
+  \begin{minipage}[t]{0.48\textwidth}\centering
+    \adjustimage{max width=\linewidth,max height=\klfighalfh,keepaspectratio}{#3}%
+    \captionof{figure}{#4}
+  \end{minipage}
+  \end{figure}
+}
+% 连续三张图并排
+\newcommand{\klfigtriple}[6]{%
+  \begin{figure}[!htbp]
+  \centering
+  \begin{minipage}[t]{0.32\textwidth}\centering
+    \adjustimage{max width=\linewidth,max height=\klfighalfh,keepaspectratio}{#1}%
+    \captionof{figure}{#2}
+  \end{minipage}\hfill
+  \begin{minipage}[t]{0.32\textwidth}\centering
+    \adjustimage{max width=\linewidth,max height=\klfighalfh,keepaspectratio}{#3}%
+    \captionof{figure}{#4}
+  \end{minipage}\hfill
+  \begin{minipage}[t]{0.32\textwidth}\centering
+    \adjustimage{max width=\linewidth,max height=\klfighalfh,keepaspectratio}{#5}%
+    \captionof{figure}{#6}
+  \end{minipage}
+  \end{figure}
+}
+% 原文英文图注，附在中文图注后的小字
+\newcommand{\klorigcap}[1]{{\footnotesize\color{klGray}原文：#1}}
+
+% 浮动体参数：放宽“页顶/页底可放浮动体”的比例，减少大块留白
+\renewcommand{\topfraction}{0.9}
+\renewcommand{\bottomfraction}{0.75}
+\renewcommand{\textfraction}{0.08}
+\renewcommand{\floatpagefraction}{0.85}
+\setcounter{topnumber}{3}
+\setcounter{bottomnumber}{2}
+\setcounter{totalnumber}{4}
+
+% ---------- 标题 ----------
+% 层级：章 = 第一章，节 = 1.1，条 = 1.1.1（节、条前不加“节”“条”字样）
+% 颜色逐级变浅：章最深、节次之、条再浅、细目转灰，便于一眼分辨层次
+\setcounter{secnumdepth}{3}
+\setcounter{tocdepth}{2}
+\RequirePackage{titlesec}
+\RequirePackage{etoolbox}
+
+% 标题后的第一段也要缩进：titlesec 在 straight 型标题里用 \@afterindentfalse 抑制缩进，
+% 这里把它改成 true（\@afterindenttrue 的含义正是“后面那段要缩进”）
+\makeatletter
+\patchcmd{\ttl@straight@ii}{\@afterindentfalse}{\@afterindenttrue}{}{%
+  \PackageWarning{klayout-manual}{section indent patch failed}}
+\makeatother
+
+\titleformat{\section}{\Large\bfseries\color{klH2}}{\thesection}{0.8em}{}[\vspace{0.25ex}{\color{klRule}\titlerule[0.8pt]}]
+\titlespacing*{\section}{0pt}{2.6ex plus 1ex minus .2ex}{1.4ex plus .2ex}
+\titleformat{\subsection}{\large\bfseries\color{klH3}}{\thesubsection}{0.7em}{}
+\titlespacing*{\subsection}{0pt}{2.0ex plus .8ex minus .2ex}{0.9ex plus .2ex}
+\titleformat{\subsubsection}{\normalsize\bfseries\color{klH4}}{\thesubsubsection}{0.6em}{}
+\titlespacing*{\subsubsection}{0pt}{1.6ex plus .6ex minus .2ex}{0.7ex plus .2ex}
+
+% 章标题：深色 + 下方双线，与节区分
+\titleformat{\chapter}[display]
+  {\bfseries\color{klH1}}
+  {\Large\color{klH2}\chaptertitlename\ \thechapter}
+  {0.6ex}
+  {\Huge}
+  [\vspace{0.8ex}{\color{klBlue}\titlerule[1.2pt]}{\color{klRule}\titlerule[0.4pt]}]
+\titlespacing*{\chapter}{0pt}{-10pt}{24pt}
+
+% ---------- 页眉：彩色细线 + 奇偶分侧 ----------
+\RequirePackage{fancyhdr}
+\pagestyle{fancy}
+\fancyhf{}
+% 奇数页：页眉外侧页码、内侧章名；偶数页对调
+\fancyhead[LE,RO]{\small\color{klGray}\thepage}
+\fancyhead[RE,LO]{\small\color{klGray}\itshape\nouppercase{\leftmark}}
+% 页眉下方的彩色细线
+\renewcommand{\headrule}{{\color{klBlue}\hrule width\headwidth height 0.6pt}}
+% 章首页（plain）不带页眉线，页码放底部居中
+\fancypagestyle{plain}{\fancyhf{}\fancyfoot[C]{\small\color{klGray}\thepage}%
+  \renewcommand{\headrule}{}}
+% 页码也带颜色
+\renewcommand{\headrulewidth}{0.6pt}
+
+% 正文颜色与首行缩进
+\color{klInk}
+\setlength{\parindent}{2em}   % 所有段落（含标题后第一段）一律缩进 2 字
+
+% 标题后的第一段默认不缩进：\@afterheading 会把首行的缩进盒子取走，
+% 这里让它不再取走（不能改成往 \everypar 里插 \indent，那样每段会叠成双倍缩进）
+\makeatletter
+\patchcmd{\@afterheading}{\if@afterindent}{\iftrue}{}{%
+  \PackageWarning{klayout-manual}{afterheading indent patch failed}}
+\makeatother
+
+\endinput

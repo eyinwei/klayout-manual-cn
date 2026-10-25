@@ -1,0 +1,1194 @@
+% Layout vs. Schematic (LVS) —— 由 work/build.py 自动生成，勿手改；改译文请改 work/translations/
+\chapter{Layout vs. Schematic (LVS)}\label{ch:lvs}
+
+\section{LVS 概览}\label{sec:lvs_overview}
+
+\subsection{LVS 脚本的基本用法}
+
+从 0.26 版起，KLayout 把 LVS 作为内置功能支持。LVS 是版图验证中的一个重要步骤：它确保画出来的电路与设计意图中的 schematic 一致。
+
+基本做法很简单：先分析输入的版图，从中提取出 netlist；再把这份 netlist 与参考 netlist（schematic）比对。若两者等价，电路就很可能按预想的方式工作。
+
+除版图之外，LVS 脚本还需要一份 schematic netlist。目前 KLayout 可以读取 SPICE 格式的 netlist，读取器也支持一定程度的配置，因此可望消化相当一部分实用的 SPICE netlist。
+
+基本思路虽简单，细节却相当复杂。本文档旨在说明 KLayout 为实现 LVS 所提供的方案，以及这一过程带来的各种约束。
+
+KLayout 的 LVS 与 DRC 脚本一样集成在 Macro Development IDE 中；事实上 LVS 是 DRC 脚本的扩展，DRC 的全部功能在 LVS 脚本中同样可用。netlist 提取在 DRC 框架内完成，只是该框架被赋予了识别器件与连接关系的能力。
+
+LVS 脚本在宏编辑器 IDE 中创建、编辑与调试，统一在 \ui{LVS} 标签页中管理。IDE 的更多细节见第 原文对应章节 节；DRC 脚本的入门见第 \ref{sec:drc_basic} 节。
+
+LVS 脚本的 XML 形式用 \ui{.lylvs} 后缀（对应 DRC 的 \ui{.lydrc}），纯文本形式用 \ui{.lvs}（同 \ui{.drc}）。与 DRC 脚本一样，LVS 脚本也能在批处理模式下独立执行，参见第 \ref{sec:drc_basic} 节中“把 KLayout 当作独立的 DRC 引擎”一节。
+
+\subsection{KLayout 的 LVS 实现}
+
+KLayout 内部的 LVS 实现在连接关系、器件识别与输入输出通道方面都设计得高度灵活，要点如下：
+
+\begin{itemize}
+\item 尽量少做假设：KLayout 力图少设前提——它不要求 label（虽然 label 有帮助），也不要求特定的层次结构、Cell 名或几何形状。netlist 提取完全由版图中的 Polygon 得出，label 与 Cell 层次只是提供额外信息。
+\item 层次化分析：KLayout 具备层次化版图处理引擎来支持层次化 LVS。所谓层次化处理，是指布尔运算尽可能在局部 Cell 环境中完成；相应地，器件也在其所属的版图 Cell 内被识别。
+\item 层次稳定：KLayout 不会改动版图的层次结构，也不会引入 variant——至少对布尔运算及部分其它运算是如此。这样即便做过层次化 DRC 运算，版图与 schematic 的层次之间仍能保持对应。只有少数分析会引入 variant。
+\item 灵活的引擎：netlist 生成引擎在器件识别与连接提取方面高度灵活。首先，几乎所有 DRC 功能都能用来推导用于器件构造与连接提取的中间图层；其次，器件识别可以用脚本定制。
+\item 灵活的 I/O：netlist 是 KLayout 的对象树，其组成（net、device、circuit、subcircuit 等）都完整映射为脚本对象（主类见 API 文档）。因此 netlist 可以在 LVS 脚本内或其它场合被分析与操纵。
+\item 界面集成：KLayout 提供 netlist 提取结果与 LVS 报告（cross reference、错误）的浏览器。
+\end{itemize}
+
+\subsection{术语}
+
+KLayout 使用一套专门的术语，说明如下：
+
+\begin{itemize}
+\item Circuit（电路）：由器件、pin 与 subcircuit 连接而成的图。图的节点是连接至少两个元素的 net。若由版图导出，一个 circuit 对应某个特定的版图 Cell。
+\item Abstract circuit（抽象电路）：清空了内部结构的 circuit。这类 circuit 没有 net，只定义 pin，本质上是“黑盒”，LVS 需把其内部结构视为无关（don't care）。抽象电路适合用来表示那些不在版图中出现、但存在于 schematic 中的子单元。
+\item Pin（引脚）：circuit 与外界连接的点。circuit 可以以 subcircuit 的形式嵌入别的 circuit；连到这些 subcircuit 的 pin 上的 net 会传播进该 subcircuit，并在那里连接更多元素。pin 通常挂在一个 net 上，某些情况下可以挂多个。
+\item Subcircuit（子电路）：嵌入另一个 circuit 中的 circuit。同一个 circuit 可以被多次使用，因此多个 subcircuit 可以引用同一个 circuit。若由版图导出，一个 subcircuit 对应某个特定的 Cell Instance。
+\item Device（器件）：描述原子功能单元的 n 端实体，可以是有源器件（晶体管），也可以是无源器件（电阻、电容）。
+\item Device class（器件类）：某一类型的器件。器件类有“种”（kind）之分，每种之下可以有多个类。例如 MOS 晶体管的种是 \ui{MOS4}（四端 MOS 晶体管），而在 CMOS 工艺中通常至少有 \ui{NMOS} 与 \ui{PMOS} 两个类。
+\item Device extraction（器件提取）：检测器件并在导电区域与器件本体之间建立连接的过程，这些连接最终构成器件的 terminal。
+\item Device combination（器件合并）：把同类多个器件组合成单个器件的过程。例如串联电阻可以并成一个；更重要的是，并行的 MOS 晶体管（“指状”晶体管）会合并成单个器件。
+\item Terminal（端子）：器件的 pin。terminal 通常按功能命名，例如 MOS 晶体管的栅极叫 \ui{G}。
+\item Connectivity（连接关系）：对工艺叠层中导电区域的描述。图层之间存在层内与层间连接：层内连接指同层上相互接触的 Polygon 构成一个连通（即导电）区域；层间连接则由 via 之类建立。
+\item Netlist（网表）：由 circuit 与 subcircuit 构成的层次结构。netlist 通常有一个顶层 circuit，其它 circuit 通过 subcircuit 从它被调用。
+\item Extracted netlist（提取网表）：由版图导出的 netlist。有时该词指带寄生元件（由连线几何导出的电阻、电容）的网表；在 KLayout 的 LVS 语境中，它指纯粹的连通性 netlist。
+\item Schematic（原理图）：作为 LVS 参考的 netlist。“schematic”指的是设计者画出的 netlist，它由物理实现过程转成版图；LVS 则把版图转回 extracted netlist 并与 schematic 比对。
+\item Annotated layout 与 Net geometry（标注版图与 net 几何）：把属于各 net 的 Polygon 归集起来。circuit 中的每条 net 都由一组 Polygon 表示，对应原有连线几何与器件 terminal 的几何。由于 net 可以经 pin 传播到 subcircuit，net 及其几何标注也会随之传播。
+\item Layout to netlist database（L2N DB）：把 extracted netlist 的信息与标注版图合在一起的数据结构。L2N 数据库可用于可视化 net、从已知位置探测 net，以及做其它分析与处理；有相应的 API 供访问。
+\item Cross reference（交叉引用）：LVS netlist 比对（pairing）中两个 netlist 之间相互匹配的对象列表，同时也列出不匹配项与“不精确配对”。不精确配对指并不完全一致、但仍很可能应视为同一对象的一对。
+\item LVS database（LVS 数据库）：L2N 数据库、schematic netlist 与 cross reference 的组合，是 LVS 结果的完整映像；有相应 API 供访问其中元素。
+\item Labels（标签）：画在版图中的 Text 对象，用来在特定图层的特定位置打上文字。label 最典型的用途是给 net 命名：若 label 参与连接关系，由它形成的 net 就会以该文字作为 net 名。
+\end{itemize}
+
+\section{LVS 入门}\label{sec:lvs_intro}
+
+\subsection{LVS 入门}
+
+为介绍 LVS 功能，我们取最简单的 CMOS 结构：两管反相器。
+
+\subsubsection{版图}
+
+该反相器由两个 MOS 晶体管构成。单个晶体管由一块有源区（ACTIVE 层上的矩形）和横跨其上的栅极（POLY 层）组成，栅极在源、漏区（栅极左右两侧）之间形成沟道；CONTACT 提供与上层金属的连接。
+
+实际版图做成标准单元的形式，多个标准单元可以沿水平方向排成一行。电源轨做在第二层金属上：上方为 VDD，下方为 VSS。n-well 延伸到单元顶部，并应与相邻单元的 well 区域相连：
+
+\klfig[0.8\textwidth]{inv.png}{两管反相器版图}
+
+\subsubsection{schematic}
+
+可以为这个反相器画一个简化 schematic（左图），也可以画一个更接近实际、包含晶体管体电位（bulk）的 schematic（右图）。让晶体管体区保持在确定电位以避免闩锁效应很重要，因此这些 terminal 也需要各自的 pin。
+
+\klfig[0.8\textwidth]{inv_schematic.png}{反相器 schematic：简化版（左）与含 bulk 连接的版本（右）}
+
+做 LVS 首先需要一份参考 schematic，即与带 bulk 连接的 schematic 相对应的 SPICE netlist：
+
+\begin{lstlisting}
+* Simple CMOS inverer circuit (inv.cir) .SUBCKT INVERTER VSS IN OUT NWELL SUBSTRATE VDD Mp VDD IN OUT NWELL PMOS W=1.5U L=0.25U Mn OUT IN VSS SUBSTRATE NMOS W=0.9U L=0.25U .ENDS
+\end{lstlisting}
+
+我们要分析的电路是一个被嵌入更大电路中的 Cell，因此把反相器描述成 subcircuit 比较合适。若 netlist 中只有 subcircuit，KLayout 会分析该 circuit；否则会把全局定义视为主电路。
+
+\subsection{LVS 脚本示例}
+
+用于比对上述版图与 schematic 的 LVS 脚本如下（细节见第 \ref{sec:lvs_intro} 节）：
+
+\begin{lstlisting}
+# LVS script (demo technology, KLayout manual) # Preamble: deep # Reports generated: report_lvs # LVS report window # Drawing layers: nwell = input(1, 0) active = input(2, 0) pplus = input(3, 0) nplus = input(4, 0) poly = input(5, 0) contact = input(6, 0) metal1 = input(7, 0) metal1_lbl = labels(7, 1) via1 = input(8, 0) metal2 = input(9, 0) metal2_lbl = labels(9, 1) # Bulk layer for terminal provisioning: bulk = polygon_layer # Computed layers: active_in_nwell = active & nwell pactive = active_in_nwell & pplus pgate = pactive & poly psd = pactive - pgate active_outside_nwell = active - nwell nactive = active_outside_nwell & nplus ngate = nactive & poly nsd = nactive - ngate # Device extraction # PMOS transistor device extraction extract_devices(mos4("PMOS"), { "SD" => psd, "G" => pgate, "W" => nwell, "tS" => psd, "tD" => psd, "tG" => poly, "tW" => nwell }) # NMOS transistor device extraction extract_devices(mos4("NMOS"), { "SD" => nsd, "G" => ngate, "W" => bulk, "tS" => nsd, "tD" => nsd, "tG" => poly, "tW" => bulk }) # Define connectivity for netlist extraction # Inter-layer connect(psd, contact) connect(nsd, contact) connect(poly, contact) connect(contact, metal1) connect(metal1, metal1_lbl) # attaches labels connect(metal1, via1) connect(via1, metal2) connect(metal2, metal2_lbl) # attaches labels # Global connect_global(bulk, "SUBSTRATE") connect_global(nwell, "NWELL") # Compare section schematic("inv.cir") align # flattens unpaired circuits netlist.simplify # removes floating nets, combines devices compare
+\end{lstlisting}
+
+想试这段脚本，可以加载 KLayout 源码中的反相器版图 \ui{testdata/lvs/inv.oas}，打开宏编辑器 IDE（\menu{Tools > Macro Development}），在 LVS 标签页新建脚本并粘贴上面的内容，然后运行。LVS 报告浏览器会打开，并把一切显示为绿色。
+
+\klfig[0.8\textwidth]{lvs_browser.png}{LVS 报告浏览器：全部匹配时显示为绿色}
+
+\subsection{LVS 脚本的结构}
+
+LVS 脚本中第一条、也是最重要的一条语句应是 \ui{deep} 开关，它启用层次化模式。若不启用层次化模式，生成的 netlist 不含 subcircuit；这种平坦 netlist 比对效率低，也难调试。因此用 \ui{deep} 切到层次化模式：
+
+\begin{lstlisting}
+deep
+\end{lstlisting}
+
+我们还指示 LVS 生成报告，并在结束后于报告浏览器中打开：
+
+\begin{lstlisting}
+report_lvs
+\end{lstlisting}
+
+需要的话也可以把报告写入文件（见 \ui{report\_lvs}）：
+
+\begin{lstlisting}
+report_lvs("inv.lvsdb")
+\end{lstlisting}
+
+接下来声明输入图层：
+
+\begin{lstlisting}
+nwell = input(1, 0) active = input(2, 0) pplus = input(3, 0) nplus = input(4, 0) poly = input(5, 0) contact = input(6, 0) metal1 = input(7, 0) metal1_lbl = labels(7, 1) via1 = input(8, 0) metal2 = input(9, 0) metal2_lbl = labels(9, 1)
+\end{lstlisting}
+
+\ui{input} 与 \ui{labels} 都是从版图源（如同 DRC，通常就是当前版图）取图层的函数。\ui{input} 取各类 Shape，而 \ui{labels} 只取 Text；这里用 \ui{labels} 取第一层金属的 label（GDS 第 7 层、datatype 1），第二层金属同理。
+
+此外再创建一个空图层，用来表示 substrate。该层并不构成封闭区域，而是一堆 Shape，它们稍后会全部连到同一条（全局）net 上：
+
+\begin{lstlisting}
+bulk = polygon_layer
+\end{lstlisting}
+
+给图层起的名字其实就是代表版图图层的变量。和 DRC 一样，可以用它们算出若干派生图层：
+
+\begin{lstlisting}
+active_in_nwell = active & nwell pactive = active_in_nwell & pplus pgate = pactive & poly psd = pactive - pgate active_outside_nwell = active - nwell nactive = active_outside_nwell & nplus ngate = nactive & poly nsd = nactive - ngate
+\end{lstlisting}
+
+这些式子都是布尔运算：\ui{\&} 是逻辑与，\ui{-} 是逻辑非。因此 \ui{active\_in\_nwell} 是 ACTIVE 位于 NWELL 之内的部分，\ui{active\_outside\_nwell} 则是其外的部分。这些式子的主要目的是把 PMOS 与 NMOS 的源漏区区分开。
+
+我们还分别取出 PMOS（pgate）与 NMOS（ngate）的栅区。准备好这些材料，就可以进入器件提取：
+
+\begin{lstlisting}
+extract_devices(mos4("PMOS"), { "SD" => psd, "G" => pgate, "W" => nwell, "tS" => psd, "tD" => psd, "tG" => poly, "tW" => nwell })
+\end{lstlisting}
+
+\ui{extract\_devices} 的第一个参数是器件提取器，即负责实际提取某类器件的对象。这里的模板是 \ui{MOS4}，而我们想产生一个名为 \ui{PMOS} 的新器件类，\ui{mos4("PMOS")} 即创建这样的提取器。
+
+第二个参数是“图层符号 → 图层”的映射。每种器件提取器都定义了一套特定的图层符号；对任何器件都需要两类图层：提取器用来识别器件的输入图层，以及器件的 terminal 连接层。
+
+输入图层用大写字母命名，terminal 输出图层则用小写 \ui{t} 加 terminal 名表示。上面那份声明是完整的，但由于 \ui{tW} 默认取 \ui{W}、\ui{tS} 与 \ui{tD} 默认取 \ui{SD}，可以写得更简短：
+
+\begin{lstlisting}
+extract_devices(mos4("PMOS"), { "SD" => psd, "G" => pgate, "W" => nwell, "tG" => poly })
+\end{lstlisting}
+
+\ui{NMOS} 类也需要一个提取器，构造方式与 PMOS 完全相同：
+
+\begin{lstlisting}
+extract_devices(mos4("NMOS"), { "SD" => nsd, "G" => ngate, "W" => bulk, "tS" => nsd, "tD" => nsd, "tG" => poly, "tW" => bulk })
+\end{lstlisting}
+
+有了器件，工作就完成了一半。接下来要交代连接关系（见 \ui{connect}）：
+
+\begin{lstlisting}
+connect(psd, contact) connect(nsd, contact) connect(poly, contact) connect(contact, metal1) connect(metal1, metal1_lbl) # attaches labels connect(metal1, via1) connect(via1, metal2) connect(metal2, metal2_lbl) # attaches labels
+\end{lstlisting}
+
+这些语句把 PMOS 源漏区（psd）与 CONTACT 相连，把 NMOS 源漏区（nsd）也与 CONTACT 相连，POLY 同样连到 CONTACT。注意我们在器件提取时已把 psd、nsd、poly 指定为 terminal 输出 \ui{tS}、\ui{tD}、\ui{tG}；把它们纳入连接关系之后，这些区域就成为对应 terminal 的一部分。
+
+金属叠层很简单（CONTACT 接 METAL1，METAL1 经 VIA1 接 METAL2）。把 label 图层纳入连接关系，label 就自动挂到 net 上：net 提取器会从这些相连的 Text 对象中取出字符串，作为相应 net 的名字。
+
+此外还需要做两处特殊连接（见 \ui{connect\_global}）：
+
+\begin{lstlisting}
+connect_global(bulk, "SUBSTRATE") connect_global(nwell, "NWELL")
+\end{lstlisting}
+
+全局连接的意思是：某图层上的所有 Shape 都属于同一条 net——即便彼此不接触——且这条 net 在 circuit 与 subcircuit 之间共享。对 bulk 层而言这当然是正确的，但对 NWELL 层未必：孤立的 NWELL 区块并不应连在一起。
+
+至此，生成 netlist 所需的全部输入都已给定，接下来指定参考 netlist：
+
+\begin{lstlisting}
+schematic("inv.cir")
+\end{lstlisting}
+
+还有两步可选但值得推荐：层次对齐与提取网表的简化：
+
+\begin{lstlisting}
+align # flattens unpaired circuits netlist.simplify # removes floating nets, combines devices
+\end{lstlisting}
+
+\ui{align} 会把另一个 netlist 中不存在的 circuit 去掉，把其内容并入父 Cell。这样就能甩掉版图中常见、但 schematic 中并没有对应 Cell 的辅助单元（例如器件 PCell）。\ui{netlist.simplify} 则通过移除悬空 net、合并器件（例如指状晶体管）来精简 netlist，并会为接口建立 pin。
+
+顺序应是先 \ui{align}，再 \ui{netlist.simplify}；两者都必须在 \ui{compare} 之前执行才有效。\ui{align} 见第 \ref{sec:lvs_overview} 节，\ui{netlist.simplify} 见第 \ref{sec:lvs_tweaks} 节。
+
+最后，一切就绪后即可触发比对：
+
+\begin{lstlisting}
+compare
+\end{lstlisting}
+
+若在脚本开头插入一条写出 netlist 的语句（见 \ui{target\_netlist}），就能得到提取网表的 SPICE 版本：
+
+\begin{lstlisting}
+# SPICE output statement (insert at beginning of script): target_netlist("inv_extracted.cir", write_spice, "Extracted by KLayout")
+\end{lstlisting}
+
+由于 LVS 匹配成功，提取网表与参考网表几乎一致，只是多了源漏区面积、周长之类几何参数：
+
+\begin{lstlisting}
+* Extracted by KLayout * cell INVERTER .SUBCKT INVERTER * net 1 IN * net 2 VSS * net 3 VDD * net 4 OUT * net 5 NWELL * net 6 SUBSTRATE * device instance $1 r0 *1 1.025,4.95 PMOS M$1 3 1 4 5 PMOS L=0.25U W=1.5U AS=0.675P AD=0.675P PS=3.9U PD=3.9U * device instance $2 r0 *1 1.025,0.65 NMOS M$2 2 1 4 6 NMOS L=0.25U W=0.9U AS=0.405P AD=0.405P PS=2.7U PD=2.7U .ENDS INVERTER
+\end{lstlisting}
+
+\subsection{带下压二极管的反相器}
+
+上面那个反相器 Cell 单独使用并没有太大用处，因为它缺少把 n-well 与 substrate 固定在确定电位的手段。这要靠下压二极管（tie-down diode）来实现。
+
+下压二极管就是有源区上的接触。这些有源区在 substrate 上注 p+、在 n-well 内注 n+（与晶体管相反的掺杂类型）。有了这样的掺杂，金属接触就不会在硅体上形成肖特基势垒，而是表现为欧姆接触。所以严格说，这种“二极管”并不是整流意义上的真正二极管。
+
+修改后的版图如下：
+
+\klfig[0.8\textwidth]{inv_with_diodes.png}{带下压二极管的版图}
+
+对应的 schematic 如下：
+
+\klfig[0.8\textwidth]{inv_schematic2.png}{带下压二极管的 schematic}
+
+有了这个电路，n-well 始终处于 VDD 电位，substrate 则被拉到 VSS：
+
+\begin{lstlisting}
+* Simple CMOS inverer circuit .SUBCKT INVERTER_WITH_DIODES VSS IN OUT VDD Mp VDD IN OUT VDD PMOS W=1.5U L=0.25U Mn OUT IN VSS VSS NMOS W=0.9U L=0.25U .ENDS
+\end{lstlisting}
+
+把下压二极管的提取包括进来之后，LVS 脚本略长一些：
+
+\begin{lstlisting}
+# LVS script (demo technology, KLayout manual) # Preamble: deep # Reports generated: report_lvs # LVS report window # Drawing layers: nwell = input(1, 0) active = input(2, 0) pplus = input(3, 0) nplus = input(4, 0) poly = input(5, 0) contact = input(6, 0) metal1 = input(7, 0) metal1_lbl = labels(7, 1) via1 = input(8, 0) metal2 = input(9, 0) metal2_lbl = labels(9, 1) # Bulk layer for terminal provisioning bulk = polygon_layer # Computed layers active_in_nwell = active & nwell pactive = active_in_nwell & pplus pgate = pactive & poly psd = pactive - pgate ntie = active_in_nwell & nplus active_outside_nwell = active - nwell nactive = active_outside_nwell & nplus ngate = nactive & poly nsd = nactive - ngate ptie = active_outside_nwell & pplus # Device extraction # PMOS transistor device extraction extract_devices(mos4("PMOS"), { "SD" => psd, "G" => pgate, "W" => nwell, "tS" => psd, "tD" => psd, "tG" => poly, "tW" => nwell }) # NMOS transistor device extraction extract_devices(mos4("NMOS"), { "SD" => nsd, "G" => ngate, "W" => bulk, "tS" => nsd, "tD" => nsd, "tG" => poly, "tW" => bulk }) # Define connectivity for netlist extraction # Inter-layer connect(psd, contact) connect(nsd, contact) connect(poly, contact) connect(ntie, contact) connect(nwell, ntie) connect(ptie, contact) connect(contact, metal1) connect(metal1, metal1_lbl) # attaches labels connect(metal1, via1) connect(via1, metal2) connect(metal2, metal2_lbl) # attaches labels # Global connect_global(bulk, "SUBSTRATE") connect_global(ptie, "SUBSTRATE") # Compare section schematic("inv2.cir") align netlist.simplify compare
+\end{lstlisting}
+
+主要差别在于计算 n 型下压区（n-well 内）与 p 型下压区的区域，这很简单：
+
+\begin{lstlisting}
+ntie = active_in_nwell & nplus ptie = active_outside_nwell & pplus
+\end{lstlisting}
+
+器件提取不变，但要把下压区纳入连接关系：
+
+\begin{lstlisting}
+connect(ntie, contact) connect(nwell, ntie) connect(ptie, contact)
+\end{lstlisting}
+
+把 ntie 连到 contact 与 nwell 之后，就连通到了 n-well，n-well 因而表现得像一个导电层（尽管电阻会很大）。别忘了 PMOS 的器件提取器把 bulk terminal 也放在 nwell 上，因此晶体管会自动连到 n-well 所在的 net。
+
+ptie 不能简单地这样连，因为“substrate”并没有对应的 Polygon；但可以把 ptie 纳入全局连接：
+
+\begin{lstlisting}
+connect_global(bulk, "SUBSTRATE") connect_global(ptie, "SUBSTRATE")
+\end{lstlisting}
+
+此时 nwell 不再列入全局连接，于是不会再错误地把所有 nwell 区域都当作连在一起。
+
+提取出的网表显示 NMOS 与 PMOS 的 bulk terminal 都接在源极上（漏源在此等价）：
+
+\begin{lstlisting}
+* Extracted by KLayout * cell INVERTER_WITH_DIODES .SUBCKT INVERTER_WITH_DIODES * net 1 IN * net 2 VDD * net 3 OUT * net 4 VSS * device instance $1 r0 *1 1.025,4.95 PMOS M$1 2 1 3 2 PMOS L=0.25U W=1.5U AS=0.675P AD=0.675P PS=3.9U PD=3.9U * device instance $2 r0 *1 1.025,0.65 NMOS M$2 4 1 3 4 NMOS L=0.25U W=0.9U AS=0.405P AD=0.405P PS=2.7U PD=2.7U .ENDS INVERTER_WITH_DIODES
+\end{lstlisting}
+
+\section{LVS 器件}\label{sec:lvs_devices}
+
+\subsection{器件提取器与器件类}
+
+KLayout 用两个概念来处理器件的多样性：
+
+device class（器件类）即器件的分类。既有电阻、MOS 晶体管这类较宽泛的类别，也可以建立更具体的类别来表示具体形态，例如 NMOS 与 PMOS。器件类还决定器件如何合并。
+
+器件类的文档见第 \ref{sec:lvs_device_classes} 节。
+
+device extractor（器件提取器）才是真正分析版图并产出器件的对象。与器件类一样，提取器也有通用类型，每种提取器产出属于某个特定类的器件。
+
+器件提取器的文档见第 \ref{sec:lvs_device_extractors} 节。
+
+\section{LVS 器件类}\label{sec:lvs_device_classes}
+
+KLayout 实现了多种标准器件类，它们是构造各类具体器件的基础。例如 \ui{MOS4} 类就是 NMOS 与 PMOS 晶体管具体器件类的基础。
+
+\subsection{Resistor（电阻）}
+
+\klfig[0.8\textwidth]{res_schematic.png}{普通电阻}
+
+普通电阻有两个 terminal：A 与 B，具有以下参数：
+
+\begin{kldesc}
+\item R：电阻值，单位欧姆
+\item L：长度，单位微米
+\item W：宽度，单位微米
+\item A：电阻区面积，单位平方微米
+\item P：电阻区周长，单位微米
+\end{kldesc}
+
+电阻可以按并联或串联方式合并。
+
+在 SPICE 中，普通电阻由 \ui{R} 元件表示；对应的 API 类见第 \ref{sec:lvs_device_classes} 节。
+
+\subsection{带 bulk terminal 的电阻}
+
+\klfig[0.8\textwidth]{res_with_bulk_schematic.png}{带 bulk terminal 的电阻}
+
+带 bulk terminal 的电阻是普通电阻的扩展：参数相同，但多一个 terminal \ui{W}，连到电阻所在的区域（例如 well 或 substrate）。
+
+若这些电阻的 bulk terminal 连在同一条 net 上，它们可以按并联或串联方式合并。
+
+带 bulk 电阻的 API 类见第 \ref{sec:lvs_device_classes} 节。
+
+\subsection{Capacitor（电容）}
+
+\klfig[0.8\textwidth]{cap_schematic.png}{普通电容}
+
+普通电容有两个 terminal：A 与 B，具有以下参数：
+
+\begin{kldesc}
+\item C：电容值，单位法拉
+\item A：电容区面积，单位平方微米
+\item P：电容区周长，单位微米
+\end{kldesc}
+
+在 SPICE 中，普通电容由 \ui{C} 元件表示；对应的 API 类见第 \ref{sec:lvs_device_classes} 节。
+
+\subsection{带 bulk terminal 的电容}
+
+\klfig[0.8\textwidth]{cap_with_bulk_schematic.png}{带 bulk terminal 的电容}
+
+带 bulk terminal 的电容是普通电容的扩展：参数相同，但多一个 terminal \ui{W}，连到电容所在的区域（例如 well 或 substrate）。
+
+若这些电容的 bulk terminal 连在同一条 net 上，它们可以按并联或串联方式合并。
+
+带 bulk 电容的 API 类见第 \ref{sec:lvs_device_classes} 节。
+
+\subsection{Diode（二极管）}
+
+\klfig[0.8\textwidth]{diode_schematic.png}{二极管}
+
+二极管有两个 terminal：A 与 C，分别为阳极与阴极，具有以下参数：
+
+\begin{kldesc}
+\item A：二极管面积，单位平方微米
+\item P：二极管周长，单位微米
+\end{kldesc}
+
+二极管按并联方式合并（A 对 A、C 对 C），合并后其面积与周长相加。
+
+在 SPICE 中，二极管由 \ui{D} 元件表示，并以器件类名作为 model 名；对应的 API 类见第 \ref{sec:lvs_device_classes} 节。
+
+\subsection{MOS 晶体管}
+
+\klfig[0.8\textwidth]{mos3_schematic.png}{三端 MOS 晶体管}
+
+三端 MOS 晶体管的 terminal 为 S、G、D，即源、栅、漏，其中 S 与 D 可互换。其参数为：
+
+\begin{kldesc}
+\item W：栅宽，单位微米
+\item L：栅（沟道）长，单位微米
+\item AS：源区面积，单位平方微米
+\item PS：源区周长，单位微米
+\item AD：漏区面积，单位平方微米
+\item PD：漏区周长，单位微米
+\end{kldesc}
+
+当源漏相连、栅极相连且栅长完全相同时，MOS3 晶体管按并联方式合并，合并后宽度、面积与周长相加。
+
+\subsection{带 bulk 的 MOS 晶体管}
+
+三端 MOS 晶体管的 API 类见第 \ref{sec:lvs_device_classes} 节。
+
+\klfig[0.8\textwidth]{mos4_schematic.png}{四端 MOS 晶体管}
+
+四端晶体管是三端晶体管的扩展，多一个 bulk terminal \ui{B}。这大概是最重要的晶体管器件，因为四端版本与 SPICE 的 \ui{M} 元件兼容。
+
+若这些 MOS 晶体管的 bulk terminal 连在同一条 net 上，它们可以像三端版本那样按并联方式合并。
+
+在 SPICE 中，MOS4 器件由 \ui{M} 元件表示，并以器件类名作为 model 名；对应的 API 类见第 \ref{sec:lvs_device_classes} 节。
+
+\subsection{双极晶体管}
+
+\klfig[0.8\textwidth]{bjt3_schematic.png}{三端双极晶体管}
+
+三端双极晶体管可以是 NPN 型或 PNP 型。在 KLayout 中，这种器件类型既能表示横向型也能表示纵向型。其参数为：
+
+\begin{kldesc}
+\item AE：发射区面积，单位平方微米
+\item PE：发射区周长，单位微米
+\item NE：发射极个数（初始为 1）
+\item AB：基区面积，单位平方微米
+\item PB：基区周长，单位微米
+\item AC：集电区面积，单位平方微米
+\item PC：集电区周长，单位微米
+\end{kldesc}
+
+提取时，多发射极版本会被提取成多个器件——每个发射区一个——此时 NE = 1。双极晶体管按并联方式合并，合并后发射极参数 AE、PE 与 NE 相加。
+
+在 SPICE 中，BJT3 器件由 \ui{Q} 元件表示，并以器件类名作为 model 名；对应的 API 类见第 \ref{sec:lvs_device_classes} 节。
+
+\subsection{带衬底的双极晶体管}
+
+\klfig[0.8\textwidth]{bjt4_schematic.png}{带衬底的四端双极晶体管}
+
+四端晶体管是三端晶体管的扩展，多一个 bulk terminal \ui{S}。
+
+若这些双极晶体管的 bulk terminal 连在同一条 net 上，它们可以像三端版本那样按并联方式合并。
+
+在 SPICE 中，BJT4 器件由带四个节点的 \ui{Q} 元件表示，并以器件类名作为 model 名；对应的 API 类见第 \ref{sec:lvs_device_classes} 节。
+
+\section{LVS 器件提取器}\label{sec:lvs_device_extractors}
+
+器件提取器是器件提取过程中真正的“干活者”。KLayout 自带多种现成的器件提取器，也可以在 LVS 脚本框架内（用 Ruby 编写）实现自定义提取器。
+
+\subsection{电阻提取器（resistor 与 resistor\textbackslash{}\_with\textbackslash{}\_bulk）}
+
+电阻提取器假设版图由一段电阻“连线”加两个端帽（contact）组成：连线用图层符号 \ui{R} 指定，端帽用 \ui{C} 指定。
+
+\klfig[0.8\textwidth]{res_ex_layout.png}{电阻提取器的输入：R 连线与 C 端帽}
+
+提取器由方块数（number of squares）与方块电阻（sheet resistance）计算阻值，方块电阻在创建提取器时给出。
+
+\begin{lstlisting}
+sheet_rho = 0.5 model_name = "RES" extract_devices(resistor(model_name, sheet_rho), { "R" => res_layer, "C" => contact_layer })
+\end{lstlisting}
+
+普通电阻有两个 terminal，分别输出到 \ui{tA} 与 \ui{tB} 两个 terminal 图层上。若未指定 \ui{tA} 或 \ui{tB}，则 \ui{A} 或 \ui{B} terminal 分别写到 \ui{C} 图层上。
+
+\klfigpair{res_ex_ta.png}{tA terminal 输出}{res_ex_tb.png}{tB terminal 输出}
+
+对带 bulk 的电阻，连线区域作为 \ui{W} terminal 输出到 \ui{tW} terminal 图层。
+
+\klfig[0.8\textwidth]{res_ex_tw.png}{tW terminal 输出}
+
+注意：阻值计算用的是一种简单近似——沿 \ui{R} Polygon 的周长走一圈，把周长分成与 \ui{C} 层接触的部分和不接触的部分，由此得出方块数。因此这是一种粗略但通常可用的估算。
+
+\subsection{电容提取器（capacitor 与 capacitor\textbackslash{}\_with\textbackslash{}\_bulk）}
+
+电容被假定由两块“极板”构成（即纵向电容），极板分别在 \ui{P1} 与 \ui{P2} 层上；电容取自这两层的重叠区域。
+
+\klfig[0.8\textwidth]{cap_ex_layout.png}{纵向电容：两块极板 P1 与 P2 的重叠}
+
+提取器由重叠面积与单位面积电容（F/平方微米）计算电容值。
+
+\begin{lstlisting}
+area_cap = 1.5e-15 model_name = "CAP" extract_devices(capacitor(model_name, area_cap), { "P1" => metal1, "P2" => metal2 })
+\end{lstlisting}
+
+普通电容有两个 terminal，分别输出到 \ui{tA} 与 \ui{tB} 图层。若未指定，\ui{A} 与 \ui{B} terminal 分别写到 \ui{P1} 与 \ui{P2} 图层上。
+
+\klfigpair{cap_ex_ta.png}{tA terminal}{cap_ex_tb.png}{tB terminal}
+
+对带 bulk 的电容，电容区域作为 \ui{W} terminal 输出到 \ui{tW} terminal 图层。
+
+\klfig[0.8\textwidth]{cap_ex_tw.png}{tW terminal}
+
+\subsection{二极管提取器（diode）}
+
+二极管被假定由两个纵向注入区（well、扩散区）构成：一个是 p 型（\ui{P} 层），另一个是 n 型（\ui{N} 层）。这两层同时也构成二极管的阳极（p）与阴极（n）。
+
+\klfig[0.8\textwidth]{diode_ex_layout.png}{二极管提取输入：P 与 N 两个注入区}
+
+\begin{lstlisting}
+model_name = "DIODE" extract_devices(diode(model_name), { "P" => pplus, "N" => nwell })
+\end{lstlisting}
+
+二极管有两个 terminal，分别输出到 \ui{tA} 与 \ui{tC} 图层。若未指定 \ui{tA}，\ui{A} terminal 写到 \ui{P} 层；若未指定 \ui{tC}，\ui{C} terminal 写到 \ui{N} 层。
+
+\klfigpair{diode_ex_ta.png}{tA terminal}{diode_ex_tc.png}{tC terminal}
+
+\subsection{MOS 晶体管提取器（mos3 与 mos4）}
+
+MOS 晶体管靠栅极（\ui{G} 输入）与源漏区（\ui{SD} 输入）识别：源漏区必须与栅极图形分离，栅极与源漏区相接触的边决定器件宽度，而垂直于该边的方向决定沟道长度。
+
+\klfig[0.8\textwidth]{mos_ex_layout.png}{MOS 提取输入：G 与 SD}
+
+\begin{lstlisting}
+model_name = "PMOS" extract_devices(mos4(model_name), { "SD" => (active - poly) & pplus, "G" => (active & poly), "W" => nwell, "tS" => active, "tD" => active, "tG" => poly, "tB" => nwell })
+\end{lstlisting}
+
+MOS3 器件产生三个 terminal，分别输出到 \ui{tS}、\ui{tG}、\ui{tD} 图层（依次为源、栅、漏）。
+
+\klfigtriple{mos_ex_ts.png}{tS terminal}{mos_ex_tg.png}{tG terminal}{mos_ex_td.png}{tD terminal}
+
+MOS4 器件多一个 terminal（bulk），写到 \ui{tB}。
+
+\klfig[0.8\textwidth]{mos_ex_tb.png}{MOS4 的 bulk terminal}
+
+\subsection{扩散 MOS 晶体管提取器（dmos3 与 dmos4）}
+
+DMOS 器件与 MOS 器件基本相同，区别在于其源、漏是区分开的。扩散型 MOS 晶体管常常如此，故得此名。
+
+DMOS 与 MOS 器件共用同一个器件类。DMOS 器件被配置为源漏不可互换，因此若它们被互换，netlist 比对会报告为错误。
+
+DMOS 晶体管靠栅极（\ui{G} 输入）、源区（\ui{S} 输入）与漏区（\ui{D} 输入）识别；源漏区须与栅极分离，其与栅极相接触的边决定器件宽度，垂直方向的尺寸决定沟道长度。
+
+\subsection{双极晶体管提取器（bjt3 与 bjt4）}
+
+双极晶体管基本上分两类：纵向型与横向型。
+
+横向晶体管由注入或扩散的 well 在晶圆上形成交替的 n/p 结构，其基本识别区是基区：集电区与发射区位于基区之内或与其重叠，采用相反的掺杂类型。
+
+\klfig[0.8\textwidth]{bjt_lateral.png}{横向双极晶体管的结构}
+
+纵向晶体管由叠放的 n/p well 构成，有时在标准 CMOS 工艺中会作为寄生成分出现。例如以 substrate 作集电区、nwell 作基区、pplus 注入作发射区，就能构成一个 PNP 晶体管。
+
+\klfig[0.8\textwidth]{bjt_vertical.png}{纵向双极晶体管的结构}
+
+两种情况下，一个基区之内都可能有多个发射区；此时每个发射区各提取一个晶体管。
+
+\subsubsection{纵向双极晶体管}
+
+纵向双极晶体管的输入取自 \ui{B}（基区）、\ui{C}（集电区）与 \ui{E}（发射区），其中 \ui{C} 是可选的。
+
+\klfig[0.8\textwidth]{bjt_ex_layout.png}{纵向双极：输入 B、C、E}
+
+尤其对双极器件而言，给出有用的 terminal 输出层很重要。通常 well 与扩散区会通过 contact 相连（此处暂不考虑肖特基二极管），因此把 terminal 送到与 contact 相接触的形状上是明智的做法。
+
+\begin{lstlisting}
+model_name = "PNP" extract_devices(bjt3(model_name), { "C" => collector, "B" => base, "E" => emitter, "tC" => contact, "tB" => contact, "tE" => contact })
+\end{lstlisting}
+
+BJT3 器件产生三个 terminal，分别输出到 \ui{tC}、\ui{tB}、\ui{tE} 图层（依次为集电、基区、发射区）。
+
+\klfigtriple{bjt_ex_tc.png}{tC terminal}{bjt_ex_tb.png}{tB terminal}{bjt_ex_te.png}{tE terminal}
+
+若集电区为空（例如 p 型 substrate），则把基区形状复制到 \ui{tC} 输出层作为集电区 terminal。
+
+BJT4 器件多一个 terminal（substrate），写到 \ui{tS}。\ui{tS} 是发射区形状的副本，但连到 substrate terminal 上。
+
+\klfig[0.8\textwidth]{bjt_ex_ts.png}{BJT4 的 substrate terminal}
+
+\subsubsection{横向双极晶体管}
+
+横向双极晶体管的输入同样取自 \ui{B}、\ui{C} 与 \ui{E}。对横向晶体管，\ui{C} 不可省略，且不得完全覆盖基区。除此之外，BJT3 与 BJT4 提取器的用法完全相同。
+
+典型的横向晶体管由基区内的一圈集电区（collector ring）与一个发射岛构成：
+
+\klfig[0.8\textwidth]{bjtlat_ex_layout.png}{横向双极：集电环与发射岛}
+
+横向情形下双极提取器产生的 terminal 与纵向情形相同，只是几何不同：
+
+\klfigtriple{bjtlat_ex_tc.png}{横向情形的 terminal 几何}{bjtlat_ex_tb.png}{横向 BJT4 的 substrate terminal}{bjtlat_ex_te.png}{横向情形 terminal 输出}
+
+同样地，对 BJT4，\ui{tS} 是发射区形状的副本但连到 substrate terminal。
+
+\klfig[0.8\textwidth]{bjtlat_ex_ts.png}{横向 BJT4 的 tS}
+
+\subsection{器件提取器与器件类}
+
+\ui{extract\_devices} 会返回所生成器件的 DeviceClass 对象，可用它做一些基本调整，其中最重要的是启用或禁用某些参数。
+
+多数器件提取器实际提取的参数比默认给出的更多。例如电阻提取器不只是求阻值，还会求出电阻条的长度 L、宽度 W 以及面积 A 与周长 P；默认只有其中一部分参与比对。
+
+参数可以用 \ui{enable\_parameter} 完全启用，或用 \ui{disable\_parameter} 禁用；\ui{tolerance} 可以启用某参数参与比对并指定比对容差；\ui{ignore\_parameter} 则让某参数在比对步骤中被忽略。
+
+定制内置器件提取器的另一种方式是提供自定义的器件类。下面的代码新建一个电阻类，修改预配置的器件参数定义以启用 \ui{W} 与 \ui{L}。
+
+\begin{lstlisting}
+class MyResistor < RBA::DeviceClassResistor def initialize super enable_parameter("W", true) enable_parameter("L", true) end end ... extract_devices(resistor("RES", 1, MyResistor), ...)
+\end{lstlisting}
+
+使用自定义器件类还带来一个可能：补充额外参数，或者借助电阻提取器的提取机制实现一种全新的器件。唯一的要求是参数与 terminal 定义必须兼容。
+
+\section{LVS 输入输出}\label{sec:lvs_io}
+
+LVS（就 netlist 提取而言 DRC 也一样）提供读写 netlist、schematic、标注版图与 LVS 结果的接口。I/O 分三大类：
+
+\begin{itemize}
+\item Netlist：纯粹的电路信息，配合 subcircuit 就构成层次化 netlist。目前可导入导出的格式是某种 SPICE netlist 方言，读写过程可以定制以获得一定灵活性。
+\item Layout-to-netlist database（L2N DB）：也称 extracted netlist 或 annotated layout，即取自原版图的 netlist 连同相应的 Shape。凡涉及非器件的 Shape，该数据库都能在几何上重建 net；器件则被抽象成类似“黑盒”的表示。
+\item LVS result database（LVS DB）：即 L2N 数据库加上参考 netlist 与 cross reference——后者是配对成功的 circuit、net、device、pin、subcircuit 及其状态信息的列表，既是查找表也是调试工具。
+\end{itemize}
+
+\subsection{写出 netlist}
+
+可以把 netlist 写成文件，例如提供给（功能）仿真器。在 LVS 脚本中，全局语句 \ui{target\_netlist} 触发 netlist 写出（细节见 \ui{target\_netlist}）。
+
+\begin{lstlisting}
+target_netlist("output.cir", write_spice, "Created by KLayout")
+\end{lstlisting}
+
+这条语句原则上可以出现在脚本任何位置，netlist 会在脚本成功执行后写出。第一个参数是文件路径（默认相对于原版图文件），第二个参数是 writer：\ui{write\_spice} 创建一个 SPICE netlist writer。
+
+\ui{write\_spice} 配置函数有两个选项：
+
+\begin{lstlisting}
+write_spice(use_net_names, with_comments)
+\end{lstlisting}
+
+两个选项都是布尔值。若存在且为真，第一个选项让 writer 使用真实的 net 名而不是数字编号；\ui{with\_comments} 若存在且为真，会在 netlist 中嵌入调试注释，显示实例位置、pin 名等。
+
+还可以通过给 SPICE writer 提供 delegate 来做更多定制。做法是继承 \kte{NetlistSpiceWriterDelegate} 并重实现其中一个或多个预留方法。
+
+下面这个例子不输出器件元件，而是输出 subcircuit 调用：
+
+\begin{lstlisting}
+# Write extracted netlist to extracted.cir using a special # writer delegate # This delegate makes the writer emit subcicuit calls instead of # standard elements for the devices class SubcircuitModels < RBA::NetlistSpiceWriterDelegate def write_header emit_line(".INCLUDE 'models.cir'") end def write_device(device) str = "X" + device.expanded_name device_class = device.device_class device_class.terminal_definitions.each do |td| str += " " + net_to_string(device.net_for_terminal(td.id)) end str += " " + device_class.name str += " PARAMS:" device_class.parameter_definitions.each do |pd| str += " " + pd.name + ("=%.12g" % device.parameter(pd.id)) end emit_line(str) end end # Prepare a writer using the new delegate custom_spice_writer = RBA::NetlistSpiceWriter::new(SubcircuitModels::new) custom_spice_writer.use_net_names= true custom_spice_writer.with_comments = false # The declaration of netlist production using the new custom writer target_netlist("extracted.cir", custom_spice_writer, "Extracted by KLayout")
+\end{lstlisting}
+
+对 LVS 入门一节中的简单反相器，这段脚本会产生如下 netlist。它不再打印默认的 \ui{M} 元件，而是产生 subcircuit 调用，从而可以在 subcircuit 里放更精细的模型；器件类名就用来指向这些模型 subcircuit。
+
+\begin{lstlisting}
+* Extracted by KLayout .INCLUDE 'models.cir' .SUBCKT INVERTER X$1 VDD IN OUT NWELL PMOS PARAMS: L=0.25 W=1.5 AS=0.675 AD=0.675 PS=3.9 PD=3.9 X$2 VSS IN OUT SUBSTRATE NMOS PARAMS: L=0.25 W=0.9 AS=0.405 AD=0.405 PS=2.7 + PD=2.7 .ENDS INVERTER
+\end{lstlisting}
+
+netlist 也可以直接从 netlist 对象写出：脚本中先用 \ui{netlist} 函数取得对象（该函数若尚未提取会先触发一次提取），再调用它的写出方法。与 \ui{target\_netlist} 不同，这种方式在调用处立即写出，而不是等脚本结束。
+
+\subsection{读取 netlist}
+
+读取 netlist 的主要用途是在 LVS 中作比对：参考 netlist 用 \ui{schematic} 函数读入（见 \ui{schematic}）。
+
+\begin{lstlisting}
+schematic("inverter.cir")
+\end{lstlisting}
+
+目前的 SPICE 支持有一些限制：默认只实现了部分元件，即 \ui{M}（得到 \ui{MOS4} 器件类）、\ui{Q}（得到 BJT3 或 BJT4）、\ui{R}（电阻）、\ui{C}（电容）与 \ui{D}（二极管）。
+
+与 SPICE writer 一样，reader 也可以提供 delegate 来定制：继承相应类并重实现其预留方法即可。
+
+下面这个例子定制 reader，从 subcircuit 模型而不是 \ui{M} 元件取 MOS 器件；它基本上正是前面 writer 定制的反向操作（仅针对 MOS 器件）。
+
+\begin{lstlisting}
+# Provides a SPICE netlist reader delegate which turns # some subcircuit models (for subcircuits NMOS and PMOS) # into devices class SubcircuitModelsReader < RBA::NetlistSpiceReaderDelegate # implements the delegate interface: # says we want to catch these subcircuits as devices def wants_subcircuit(name) name == "NMOS" || name == "PMOS" end # implements the delegate interface: # take and translate the element def element(circuit, el, name, model, value, nets, params) if el != "X" # all other elements are left to the standard implementation return super end if nets.size != 4 error("Subcircuit #{model} needs four nodes") end # provide a device class cls = circuit.netlist.device_class_by_name(model) if ! cls cls = RBA::DeviceClassMOS4Transistor::new cls.name = model circuit.netlist.add(cls) end # create a device device = circuit.create_device(cls, name) # and configure the device [ "S", "G", "D", "B" ].each_with_index do |t,index| device.connect_terminal(t, nets[index]) end # parameters in the model are given in micrometer units, so # we need to translate the parameter values from SI to um values: device.set_parameter("W", (params["W"] || 0.0) * 1e6) device.set_parameter("L", (params["L"] || 0.0) * 1e6) return true end end # Instantiate a reader using the new delegate reader = RBA::NetlistSpiceReader::new(SubcircuitModelsReader::new) # Import the schematic with this reader schematic("inv_xmodels.cir", reader)
+\end{lstlisting}
+
+\subsection{Layout-to-Netlist 数据库 / 报告}
+
+layout-to-netlist 数据库（L2N DB）用全局函数 \ui{report\_netlist} 写出。该函数可放在脚本任意位置，写出发生在脚本成功执行之后：
+
+\begin{lstlisting}
+report_netlist("extracted.l2n")
+\end{lstlisting}
+
+若不给文件名，则只打开 netlist 浏览器而不写文件。layout-to-netlist 数据库是 KLayout 专用格式，含 netlist 信息以及版图中的 Shape 与 Instance 信息；L2N 数据库可以读入 netlist 浏览器中查看。
+
+\subsection{Layout-vs-Schematic 数据库 / 报告}
+
+Layout-vs-schematic 数据库（LVS DB）用全局函数 \ui{report\_lvs} 写出。该函数同样可放在脚本任意位置，写出发生在脚本成功执行之后：
+
+\begin{lstlisting}
+report_lvs("extracted.lvsdb")
+\end{lstlisting}
+
+若不给文件名，则只打开 netlist 浏览器而不写文件。LVS 数据库是 KLayout 专用格式，含提取网表信息、参考网表以及 cross reference 表；LVS 数据库可以读入 netlist 浏览器中查看。
+
+\section{LVS 连接关系}\label{sec:lvs_connect}
+
+\subsection{层内连接与层间连接}
+
+LVS 脚本中的连接关系设置决定了连接如何建立。连接通常通过铝、铜这类导电材料形成：表示同一材料的 Polygon 相互连通；连接也可以跨越多个 Polygon，只要它们彼此接触即构成同一导电区域。
+
+连接常常跨层进行，例如 via 就是绝缘层上的一个孔，把两层金属连起来。这类连接用 \ui{connect} 语句建模（见 \ui{connect}）：
+
+\begin{lstlisting}
+connect(layer1, layer2)
+\end{lstlisting}
+
+connect 语句表示：当 layer1 与 layer2 的 Polygon 相互重叠时，二者电气相连。layer1 与 layer2 可以是原始图层或派生图层。\ui{connect} 语句应写在需要 netlist 之前——也就是 \ui{compare} 或任何读取 netlist 的语句之前。
+
+下面是一个三层金属叠层的纵向剖面示例，以及相应的 \ui{connect} 语句：
+
+\klfig[0.8\textwidth]{metal_connections.png}{}
+
+label 也可以纳入连接关系。label 通常放在金属层上：若 label 与金属 Shape 画在同一层，用 \ui{input} 读该层时它们会自动被包含；若只想从某层读 label，用 \ui{labels} 函数。
+
+要把 label 挂到金属层上，只需把 label 层与金属层连接起来：
+
+\begin{lstlisting}
+metal1_labels = labels(10, 0) metal1 = input(11, 0) via1 = input(12, 0) metal2_labels = labels(13, 0) metal2 = input(14, 0) connect(metal1, metal1_labels) connect(metal1, via1) connect(via1, metal2) connect(metal2, metal2_labels)
+\end{lstlisting}
+
+label 连到金属层之后，其文字将用于给形成的 net 命名。理想情况下，一条 net 上只有一段文字，或有多段但内容相同的文字，此时 net 名没有歧义；若一条 net 上有多个内容不同的 label，KLayout 会做出选择并给出警告。
+
+\subsection{全局连接}
+
+KLayout 支持“隐式全局连接”：某图层上的所有 Polygon 一律视为相连，无论它们在几何上是否接触。典型例子是 substrate（即 bulk），它代表略有导电性的衬底材料，而版图中并没有表示整块衬底的 Polygon。
+
+\begin{lstlisting}
+connect_global(bulk, "VSS")
+\end{lstlisting}
+
+\ui{connect\_global} 的参数是全局连接的图层以及要创建的全局 net 名。下面的语句把 \ui{bulk} 上的所有 Shape 连成一条 net，名为 \ui{VSS}：每个 circuit 至少都有 \ui{VSS} 这条 net。
+
+\subsection{隐式连接}
+
+隐式连接适合用来提供那些打算在更高层才建立的连接。设想某个 circuit 有一条很大的电源网：做版图时电源网可能还没有完全连通，因为计划在上层或由布线工具把它接起来。
+
+为了能验证这样的 Cell，可以用“隐式连接”：给各部分 net 打上相同名字的 label，并假定它们相连。例如要给 \ui{VDD} net 的各部分建立隐式连接，就在每部分上放一个 \ui{VDD} label，然后加上：
+
+\begin{lstlisting}
+connect_implicit("VDD")
+\end{lstlisting}
+
+\ui{connect\_implicit}（见 \ui{connect\_implicit}）可以出现多次，用来建立多条这样的连接。隐式连接在顶层被接受，但会给出警告，提示该连接应在更高层完成；在 subcircuit 中，隐式连接同样会被报出，除非后续得到物理连接的确认。
+
+也可以把某个版图声明为顶层版图，这会把“缺少物理连接”的警告升级为错误：
+
+\begin{lstlisting}
+top_level(true)
+\end{lstlisting}
+
+在其他系统里，\ui{connect\_implicit} 这类功能也被称为“must connect”网。
+
+可以用 glob 风格的通配符，把某一类 label 纳入 \ui{connect\_implicit} 语句：
+
+\begin{lstlisting}
+connect_implicit("VDD*")
+\end{lstlisting}
+
+这样一来，所有带 \ui{VDD1} label 的 net（或带 \ui{VDD\_5V} label 的 net）都会各自连在一起。但该语句只把 \ui{VDD1} 与 \ui{VDD1} 相连，不会把 \ui{VDD1} 与 \ui{VDD2} 相连；要让不同名字的 label 之间建立连接，需另外写语句。
+
+\ui{connect\_implicit} 可以出现多次，每个语句都在扩大“哪些 label 会被连接”的范围。
+
+上面的写法适用于所有 Cell。也可以把它限定到具体 Cell：第一个参数给 Cell 名的 glob 通配符，第二个参数给 net 名通配符。
+
+下面这条语句把 \ui{MEMCELL} 子 Cell 中所有带 \ui{VDD} label 的 net 连起来：
+
+\begin{lstlisting}
+connect_implicit("MEMCELL", "VDD")
+\end{lstlisting}
+
+该规则作用于所有匹配第一个参数通配符的 Cell。同样，\ui{connect\_implicit} 规则可以给多次，此时所有匹配到的规则共同起作用。
+
+\ui{connect\_implicit} 语句必须写在 netlist 提取之前，通常在 \ui{connect} 语句之前或紧随其后。
+
+\subsection{显式连接}
+
+显式连接适合用来强制建立那种 schematic 中存在、但在该 Cell 层面版图上并未物理建立的连接。例如下面这个反相器版图：
+
+\klfig[0.8\textwidth]{inv.png}{}
+
+版图中没有下压二极管，因此 n-well 区没有物理连接，bulk 衬底也没有物理连接。这样能省面积，但这些二极管迟早要通过别的方式补上，通常是在把标准单元组合起来的时候。
+
+然而在反相器这一层并没有这种连接，于是反相器有独立的 bulk 与 n-well pin；而 schematic 有时是简化版，不提供这些 pin。这样就出现了版图与 schematic 之间的固有失配。
+
+\klfig[0.8\textwidth]{inv_explicit.png}{}
+
+为使版图与 schematic 对齐，可以显式地把 bulk 与 VSS pin 相连，n-well 与 VDD 同理。这套机制与前面讲的 \ui{connect\_implicit} 类似，区别在于它能连接名字不同的 net。
+
+要在上面的例子里建立显式连接，先确保 n-well 与 bulk 有合适的名字：n-well 通过在 n-well 岛上放 label 命名（例如 \ui{NWELL}）；bulk 并不是真正带 Polygon 的版图图层，因此用 \ui{connect\_global} 给它一个全局名。
+
+下面的代码把 \ui{INV} Cell 内的 bulk net 与 \ui{VSS} 连起来：
+
+\begin{lstlisting}
+connect_global(bulk, "BULK") ... connect_explicit("INV", [ "BULK", "VSS" ])
+\end{lstlisting}
+
+注意该规则会形成一条名为 \ui{BULK,VSS} 的新 net，把两条子 net 合并。
+
+Cell 名可以是通配符，例如 \ui{INV*} 会把该规则应用到所有以 \ui{INV} 开头的 Cell。Cell 通配符不是必须的，省略时规则作用于所有 Cell。
+
+与隐式连接一样，显式连接也会检查其在上一层是否落实——无论是物理连接，还是另一条显式/隐式连接。
+
+显式连接还会对所涉及 net 名隐含地建立隐式连接，因此上例中 \ui{VSS} 的各个片段即便物理上未相连也被视为相连，同样会检查这些连接是否在更高层落实。
+
+同样，\ui{connect\_explicit} 语句必须写在 netlist 提取之前，通常在 \ui{connect} 语句之前或紧随其后。
+
+\subsection{软连接}
+
+软连接（soft connection）用来找出“信号甚至电源经由高阻通路走线”这类布线问题。高阻通路可以是经多晶硅、注入区、well 或衬底形成的连接，这类区域的电阻常比金属高几个数量级。
+
+举一例：
+
+\klfig[0.8\textwidth]{soft_connections.png}{}
+
+这是教科书式的平面 CMOS 工艺，两个 PMOS 器件位于同一个 n-well 中，例如可分属两组反相器。两个 PMOS 的源极都需要接到 VDD，n-well 区域同样需要接到 VDD。
+
+这样的工艺叠层可以这样描述连接关系：
+
+\begin{lstlisting}
+# Input layers nwell = ... active = ... pplus = ... nplus = ... poly = ... contact = ... metal1 = ... via1 = ... metal2 = ... # computed layers (nactive, pactive) = active.and_not(nwell) # PMOS and NMOS source/drain regions psd = (nactive & pplus) - poly nsd = (pactive & nplus) - poly # n tie and p tie (nwell and substrate contact) ntie = nactive & nplus ptie = pactive & pplus # connections # nwell connections connect(ntie, nwell) connect(contact, ntie) # substrate connections connect_global(ptie, "BULK") connect(contact, ptie) # device connections connect(contact, psd) connect(contact, nsd) connect(contact, poly) # metal connections connect(metal1, contact) connect(via1, metal1) connect(metal2, via1)
+\end{lstlisting}
+
+但问题来了：如图所示，左侧 PMOS 的源极确实接到了 VDD，右侧那个却缺少通往 VDD 的金属连接。仅从纯连通性看，这个晶体管的源极仍然连到了 VDD——只是经由了高阻的 n-well。
+
+解决办法是引入软连接：把 \ui{connect} 换成 \ui{soft\_connect}，把 \ui{connect\_global} 换成 \ui{soft\_connect\_global}（见 \ui{soft\_connect} 与 \ui{soft\_connect\_global}）。第一个图层是“上层”，第二个是“下层”。
+
+软连接可以理解为有方向的连接：电流只能从上层流向下层，反之不行。因此只有当软连接的两个上层 terminal 都接到同一条物理 net 上时，才构成真正的连接。
+
+要解决 n-well 的问题，把 n-tie 到 n-well 的那条连接语句改成 \ui{soft\_connect}：
+
+\begin{lstlisting}
+soft_connect(ntie, nwell)
+\end{lstlisting}
+
+此时上面的图就变成这样：
+
+\klfig[0.92\textwidth]{soft_connections2.png}{}
+
+有了这个定义，netlist 提取器就能发现该故障并给出警告或错误（顶层模式下为错误）。警告显示在日志标签页，指出布线不完整，并给出被软连接分开的各子 net 的细节。
+
+为完整起见，还需要纳入其它软连接，例如经衬底（到 BULK net 的全局软连接）、经源漏注入区、经 tie 注入区以及经多晶硅的连接：
+
+\begin{lstlisting}
+# Input layers nwell = ... active = ... pplus = ... nplus = ... poly = ... contact = ... metal1 = ... via1 = ... metal2 = ... # computed layers (nactive, pactive) = active.and_not(nwell) # PMOS and NMOS source/drain regions psd = (nactive & pplus) - poly nsd = (pactive & nplus) - poly # n tie and p tie (nwell and substrate contact) ntie = nactive & nplus ptie = pactive & pplus # connections # nwell connections soft_connect(ntie, nwell) soft_connect(contact, ntie) # substrate connections soft_connect_global(ptie, "BULK") soft_connect(contact, ptie) # device connections soft_connect(contact, psd) soft_connect(contact, nsd) soft_connect(contact, poly) # metal connections connect(metal1, contact) connect(via1, metal1) connect(metal2, via1)
+\end{lstlisting}
+
+如代码所示，可以指定多条软连接；从检查的角度看，所有软连接都是同一种性质。
+
+注意，两条方向相反的软连接会相互抵消，从而变成一条硬连接：
+
+\begin{lstlisting}
+soft_connect(a, b) soft_connect(b, a)
+\end{lstlisting}
+
+注意：因此务必留意软连接的方向——上层先写高导电（低阻）图层，下层后写低导电（高阻）图层。
+
+\subsubsection{软连接与“must connect”网}
+
+软连接与 must connect 网（即 \ui{connect\_explicit} 与 \ui{connect\_implicit}）目的相同：发现不完整的布线。二者通常配合使用，例如对 VDD net 做 \ui{connect\_implicit}，并在 schematic 未把 VDD 与 NWELL 相连时对 VDD 与 NWELL 做 \ui{connect\_explicit}。
+
+软连接在执行 \ui{connect\_explicit} 与 \ui{connect\_implicit} 之前就被检查，因此软连接错误无法通过声明 must connect 来掩盖。反过来这也不成问题，因为两种检查都会给出警告或错误（顶层模式下）。
+
+\section{LVS 比对}\label{sec:lvs_compare}
+
+实际的比对步骤相当简单：只要已经设置好提取（\ui{extract\_devices}）、连接关系（\ui{connect}、\ui{connect\_global}、\ui{connect\_implicit}），并提供了参考 netlist，就可以直接调用 \ui{compare}。
+
+\begin{lstlisting}
+compare
+\end{lstlisting}
+
+该方法（\ui{compare}）会提取 netlist（若尚未提取）并与 schematic 比对，成功返回 true，否则返回 false——若你想据此做进一步处理会很有用。
+
+比对步骤可以通过设置提示（hint）来配置。
+
+\subsection{net 等同提示}
+
+把两条 net 声明为等同有时很有用，至少在调试阶段如此：比对算法随后可以据此推断失配的真正原因。例如接线名与 schematic 中的名字不一致时，这样可以排除干扰。
+
+\begin{lstlisting}
+same_nets("LOGIC", "VDD", "VDD:P")
+\end{lstlisting}
+
+这个例子假定电源网在版图中标为 \ui{VDD}、在 schematic 中叫 \ui{VDD:P}。正式验证时不要把这条语句留在脚本里。
+
+\ui{same\_nets} 也可以用来要求指定的 net 必须匹配。这在顶层很有用，例如检查每个 pad 上分配的 net 是否对应，从而保证 pad 接对。
+
+\begin{lstlisting}
+same_nets!("CHIP", "VDD", "VDD")
+\end{lstlisting}
+
+带感叹号的写法含义不同：若版图或 schematic 中缺少 \ui{VDD} 网，或两者不匹配，就报告 net 失配。上面的写法还可以进一步组合使用。
+
+\begin{lstlisting}
+same_nets!("CHIP", "VDD")
+\end{lstlisting}
+
+circuit 名与 net 名都支持通配符。下面的例子要求 \ui{INVERTER} circuit 中所有以 \ui{PAD} 开头的 net 在版图与 schematic 中都要有对应：
+
+\begin{lstlisting}
+same_nets!("TOP", "PAD*")
+\end{lstlisting}
+
+因此，若版图中有 PAD1 而 schematic 中没有，就是错误；若两边都有 PAD2 但彼此不匹配，同样是错误。
+
+\ui{same\_nets} 与 \ui{same\_nets!} 可以出现在 LVS 脚本的任何位置。
+
+关于 \ui{same\_nets} 的更多信息见 \ui{same\_nets} 与 \ui{same\_nets!}。
+
+\subsection{circuit 等同提示}
+
+默认情况下，同名的 circuit 被视为等价。若不成立，可以用 \ui{same\_circuit} 函数指定等价关系：
+
+\begin{lstlisting}
+same_circuits("CIRCUIT_IN_LAYOUT", "CIRCUIT_IN_SCHEMATIC")
+\end{lstlisting}
+
+把 circuit 声明为“相同”并不意味着跳过比较，它仍然会被比较；该函数只是提示到哪里去找比对目标。
+
+\subsection{器件类等同提示}
+
+默认情况下同名的器件类被视为等价。若不成立，可以用 \ui{same\_device\_classes} 指定：
+
+\begin{lstlisting}
+same_device_classes("PMOS_IN_LAYOUT", "PMOS_IN_SCHEMATIC") same_device_classes("NMOS_IN_LAYOUT", "NMOS_IN_SCHEMATIC")
+\end{lstlisting}
+
+该方法也可以多次调用，建立多对多的等价关系：
+
+\begin{lstlisting}
+same_device_classes("POLYRES", "RES") same_device_classes("WELLRES", "RES")
+\end{lstlisting}
+
+若某一侧给 \ui{nil}，则相应器件基本被忽略：
+
+\begin{lstlisting}
+# ignores "POLYRES" devices: same_device_classes("POLYRES", nil)
+\end{lstlisting}
+
+\subsection{容差}
+
+比对器件参数时，默认要求严格相等。但对电阻这类器件，画出来的值通常很难与 schematic 中的值精确一致（尺寸会有取整、近似等误差）。
+
+解决办法是指定参数容差。容差可以用绝对值或相对值给出：绝对容差表示版图参数可以在目标值上下偏差这么多；
+
+相对容差则由目标值乘以该系数得出，例如 0.05 表示允许 5\% 的偏差。
+
+也可以同时给出绝对与相对容差，此时两者相加，允许的偏差更大。
+
+指定绝对容差用 \ui{tolerance} 函数：
+
+\begin{lstlisting}
+tolerance("NMOS", "L", 0.05)
+\end{lstlisting}
+
+两个参数分别是器件类名与要应用容差的参数名。上例中为 \ui{L} 指定了 50 纳米的容差。
+
+相对容差作为第四个参数给出；可以把绝对容差设为 0，只保留相对容差。下面给出 1\% 的容差：
+
+\begin{lstlisting}
+tolerance("NMOS", "L", 0.0, 0.01)
+\end{lstlisting}
+
+容差还有更明确的写法：
+
+\begin{lstlisting}
+tolerance("NMOS", "L", :absolute => 0.05)
+\end{lstlisting}
+
+或者：
+
+\begin{lstlisting}
+tolerance("NMOS", "L", :relative => 0.01)
+\end{lstlisting}
+
+同时给出两者即表示绝对加相对容差。下面的调用为 \ui{NMOS} 的 \ui{L} 参数给出 50 纳米绝对容差与 1\% 相对容差。
+
+\begin{lstlisting}
+tolerance("NMOS", "L", 0.05, 0.01) tolerance("NMOS", "L", :absolute => 0.05, :relative => 0.01)
+\end{lstlisting}
+
+\subsection{忽略参数}
+
+也可以让某些器件参数完全不参与 netlist 比对。例如不想比较 \ui{NMOS} 的 \ui{L} 参数，可以这样写：
+
+\begin{lstlisting}
+ignore_parameter("NMOS", "L")
+\end{lstlisting}
+
+这条语句可以放在脚本中 \ui{compare} 之前的任何位置。
+
+默认只比较“主要”（primary）参数。以电阻为例，\ui{R} 是主要参数，\ui{L}、\ui{W}、\ui{A}、\ui{P} 都不是。用 \ui{tolerance} 启用某个参数会把它一并纳入比较。
+
+\subsection{启用与禁用参数}
+
+如前所述，某些器件参数是主要的，另一些不是。例如对电阻器件，\ui{R}（阻值）是主要参数，而 \ui{L}（长度）默认不是。
+
+\begin{lstlisting}
+enable_parameter("RES", "L")
+\end{lstlisting}
+
+这带来两点影响：其一，\ui{L} 参数会被写进 SPICE 输出 netlist；其二，它也会与 schematic 中的 \ui{L} 参数比较。
+
+相应地，主要参数也可以用如下方式禁用：
+
+\begin{lstlisting}
+disable_parameter("RES", "R")
+\end{lstlisting}
+
+若该参数另有 \ui{tolerance} 或 \ui{ignore\_parameter} 设置，或安装了自定义的器件比较器，则上述行为会被覆盖。netlist 输出仅在该参数参与比较时才受影响。
+
+\subsection{pin 互换}
+
+当逻辑元件的输入在逻辑上等价、物理上却不同时，pin 互换（pin swapping）会很有用，例如 CMOS NAND 门：两个输入在逻辑上可交换，但版图上左右两个输入的实现并不相同。
+
+\begin{lstlisting}
+equivalent_pins("NAND_GATE", "A", "B")
+\end{lstlisting}
+
+第一个参数是版图 netlist 中的 circuit 名——只能在版图侧声明等价，不能对参考 schematic 声明。其后可以列出多个要互换的 pin。
+
+\subsection{消去电容与电阻}
+
+该功能可以消去“开路”的电阻与电容。目前串联电阻还不能被消去（短接）。
+
+要消去所有阻值高于阈值的电阻，用 \ui{max\_res}。下面会消去所有阻值大于等于 1 kOhm 的电阻：
+
+\begin{lstlisting}
+max_res(1000)
+\end{lstlisting}
+
+要消去所有容值低于阈值的电容，用 \ui{min\_caps}。下面会消去所有容值小于等于 0.1 fF 的电容：
+
+\begin{lstlisting}
+min_caps(1e-16)
+\end{lstlisting}
+
+\subsection{检查 pin 标注}
+
+LVS 本质上不依赖名字，除了消除歧义之外并不考虑 net 名：拓扑匹配优先。因此若 net 没有恰当地打 label，LVS 默认会把同拓扑但接错位置的 net 判为匹配。
+
+这在涉及对外连接（例如 pad）时可能带来不良后果——芯片 pad 接错是致命错误。为缓解此问题，可用 \ui{flag\_mismatched\_nets} 功能检查名字不一致的 net。
+
+该函数需要在比对步骤之后调用，即：
+
+\begin{lstlisting}
+compare flag_missing_ports
+\end{lstlisting}
+
+若只想在比较成功时抑制伪错误，也可以这样写：
+
+\begin{lstlisting}
+success = compare success && flag_missing_ports
+\end{lstlisting}
+
+该函数取 schematic 的顶层 circuit，检查所有连到 pin 的 net：核对对应版图 net 的名字（label），若名字不一致就报告。
+
+在设计过程中自下而上推进时使用该功能，可以确保所有 pin 都被恰当标注。若你在顶层 circuit 中用 pin 来描述对外接口，这一点尤其重要。
+
+注意，SPICE netlist 的顶层 circuit 也可能没有 pin（例如顶层不是 SUBCKT 时），这种情况下该函数不会做检查。
+
+你可以使用
+
+\begin{lstlisting}
+schematic.make_top_level_pins
+\end{lstlisting}
+
+在没有 pin 的情况下创建 pin。但这样会把每条 net 都变成 pin，从而强迫你标注顶层 circuit 中的每一条 net，因此更好的做法还是显式提供 pin。
+
+\subsection{比对与网表层次}
+
+好的版图是按层次构建的，netlist 比对也能利用层次结构。所谓“按层次”，是指 circuit 由若干 Cell 构成，而这些 Cell 又对应 subcircuit，形成与版图一致的多级结构。
+
+给定层次化的版图与 schematic netlist，比对算法将自下而上进行：先比较叶 circuit（不含 subcircuit 调用的 circuit），若它们匹配，再继续向上。
+
+要启用层次化提取，必须使用 \ui{deep} 模式（\ui{deep}）；若缺少该语句，版图 netlist 就是平坦的（不含 subcircuit）。
+
+（\ui{align}）：它会把在另一侧 netlist 中不存在的 circuit 从版图或 schematic netlist 中移除。版图中常有只起辅助作用的 Cell，它们在 schematic 中并没有对应电路。
+
+一般建议把 \ui{align} 放在 \ui{netlist.simplify} 之类 netlist 处理以及 \ui{compare} 之前。
+
+（\ui{align}）还有一个很有用的副作用：它会去掉任一侧顶层 circuit 之上的 circuit，从而最终从 circuit 树中切出一棵子树，只保留两侧共有的部分。
+
+\subsection{比对算法的工作方式}
+
+netlist 比对算法的大致流程如下：
+
+\begin{lstlisting}
+foreach circuit bottom up: if matching circuit found in reference netlist: if all subcircuits have been matched and pin matching has been established for them: compare net graph locally from this circuit else: skip circuit with warning else: issue a circuit mismatch error
+\end{lstlisting}
+
+这一流程的后果是：一旦某个 circuit 的 pin 无法与参考 circuit 的 pin 对应，或无法与该层次上的其它 circuit 对应，比对就不再处理其父级 circuit。
+
+局部 net 图比对算法是一种回溯算法，并借助拓扑 net 分类进行提示。拓扑分类基于最近 net 邻域，也就是从某条 net 出发，经过器件与连线能到达哪些 net、各需几跳。
+
+\klfig[0.8\textwidth]{net_graph.png}{}
+
+这里 IN net 的邻域是：经“栅极到源漏、越过 M1”的一跳到达 VDD；经“栅极到源漏、越过 M1 与 M2”的两跳到达 OUT；再经另一条路径到达 VSS。
+
+在大型 netlist 中，算法会先按邻域度量尝试无歧义地匹配 net 并登记为成对 net，这些配对往往足以推断出其余 net 的对应关系，从而大幅缩小搜索空间。
+
+\section{LVS 网表调整}\label{sec:lvs_tweaks}
+
+netlist 调整（tweaking）对于把 netlist 标准化很重要。若不做调整，提取出的 netlist 里可能含有冗余元素，或含有 schematic 中根本找不到对应的东西，比对就很难通过。
+
+netlist 调整作用于已提取的 netlist 对象，可用 \ui{netlist} 函数取得；该函数若尚未提取会先触发提取。
+
+调整也可以作用在 schematic netlist 上，例如要把名为 \ui{NMOS} 的模型 subcircuit 打平，可以这样写：
+
+\begin{lstlisting}
+schematic.flatten_circuit("NMOS")
+\end{lstlisting}
+
+\subsection{生成顶层 pin}
+
+提取出的 circuit 在顶层没有 pin，因为提取器无从得知该 circuit 对外接到哪里。比对函数不会去猜，因此顶层若无 pin，就只能做拓扑层面的比对。
+
+KLayout 提供一个用简单启发式建立顶层 pin 的函数：顶层 circuit 中每一条有名字（有 label）的 net 都会生成一个 pin：
+
+\begin{lstlisting}
+netlist.make_top_level_pins
+\end{lstlisting}
+
+\subsection{器件合并}
+
+器件合并对于那些在版图中并非以单一实体表示的器件很重要，例如：
+
+\begin{itemize}
+\item 指状 MOS 晶体管：宽度很大的 MOS 晶体管常被拆成多段，以降低栅极与扩散区的寄生电阻、电容。
+\item 串联电阻：大电阻常被分成多条、再以折线（meander）方式串起来。从器件角度看，这样的电阻由若干段串联电阻构成。
+\item 阵列电容：大电容常被拆成多个小电容排成阵列并联，以控制寄生串联电阻。
+\end{itemize}
+
+这些情况下，schematic 通常把它们归并成单个器件，用集中参数值（总电阻、总电容、晶体管宽度）表示，因此提取网表也要做同样的合并。
+
+\begin{lstlisting}
+netlist.combine_devices
+\end{lstlisting}
+
+合并串联器件可能留下悬空 net（原本连接这些器件的 net）。这类 net 可以用 \ui{purge} 移除。见 \ui{purge}，它是若干方法的封装。
+
+建议在这一步之前先运行 \ui{make\_toplevel\_pins} 与 \ui{purge}（见下文）。
+
+\subsection{打平 circuit（消去层次）}
+
+经常需要打平那些并不代表某个组织层次的 circuit——它们只是别的什么东西的外壳。版图中器件常常由 PCell 或单元实现，这些在 schematic 中并没有对应层次。
+
+要从提取网表中打平某个 circuit，用：
+
+\begin{lstlisting}
+netlist.flatten_circuit("CIRCUIT_NAME")
+\end{lstlisting}
+
+\ui{flatten\_circuit} 的参数是 glob 通配符（类 shell）。例如 \ui{NMOS*} 会打平所有以 \ui{NMOS} 开头的 circuit。
+
+\subsection{自动打平 circuit（网表对齐）}
+
+除了显式打平，也可以通过 \ui{align} 方法自动打平。
+
+这一步是可选的，但很有用：它会找出没有对应 schematic circuit 的版图 Cell 并打平它们。“打平”意味着其内容被并入父级，本身不再作为一层出现。
+
+\ui{align} 同样会打平那些没有对应版图 Cell 的 schematic circuit。
+
+\begin{lstlisting}
+align
+\end{lstlisting}
+
+\subsection{黑盒化（circuit 抽象）}
+
+circuit 抽象是一种降低验证开销的手段。在早期阶段，把某个 Cell 替换成简化版本或只留下 pin 的框架往往很有用。
+
+与此相关的一个有用方法是 \ui{blank\_circuit}：清空某 circuit 的内部结构。此后比对算法会把两边都视为黑盒，只比较接口。
+
+要清空某个 circuit 的内部，用该方法：
+
+\begin{lstlisting}
+netlist.blank_circuit("CIRCUIT_NAME") schematic.blank_circuit("CIRCUIT_NAME")
+\end{lstlisting}
+
+注意：在本版本中，blank\_circuit 要在 purge 或 simplify 之前使用（均为 LVS 脚本函数）。blank\_circuit 会设置一个标志，阻止抽象 circuit 被清除。
+
+它也有简写形式（\ui{blank\_circuit}）。与基于 netlist 的 \ui{blank\_circuit} 不同，这个简写可以用在 LVS 脚本的任何位置：
+
+\begin{lstlisting}
+blank_circuit("CIRCUIT_NAME")
+\end{lstlisting}
+
+两种情况下 \ui{blank\_circuit} 的参数都是 glob 通配符（类 shell）。例如 \ui{MEMORY*} 会清空所有以 \ui{MEMORY} 开头的 circuit。
+
+\subsection{对称节点合并}
+
+有时版图里可以省掉一些连接，因为它们不承载电流。这能简化版图、允许更紧凑的排布，但最终会与 schematic 的连通性不一致。
+
+来解决 \ui{split\_gates} 问题（见下文 \ui{split\_gates}）：在所示配置中，内部源漏节点是对称的，因此可以让 LVS 自动把它们视为同一节点。
+
+\begin{lstlisting}
+join_symmetric_nets("NAND2")
+\end{lstlisting}
+
+不过还有一个更专门的特性（\ui{split\_gates}），它覆盖更多情形，但专门针对 MOS 器件。
+
+\subsection{分裂栅}
+
+下图描述了这种称为“分裂栅”（split gate）的情形。此例中 N1 与 N2 完全相同，互换它们不会改变电路的功能。
+
+\klfig[0.92\textwidth]{lvs_symm_nodes.png}{}
+
+KLayout 提供一个特性（\ui{split\_gates}），会在 netlist 提取之后补上这类连接：
+
+\begin{lstlisting}
+split_gates("NMOS")
+\end{lstlisting}
+
+该函数会分析提取网表中的所有 circuit，针对 \ui{NMOS} 器件，把内部相关的分裂栅源漏节点连起来。若该函数找不到可连的分裂栅，则不影响结果。
+
+器件名必须是 MOS3、MOS4、DMOS3 或 DMOS4 器件。所有相关器件的栅长必须完全一致；对 MOS4 与 DMOS4，同一栅极 net 上的所有器件还必须共享同一个 bulk net。
+
+除器件名之外，还可以给一个 glob 风格的 circuit 通配符，此时分析只限于匹配该模式的 circuit。
+
+\ui{split\_gates} 可以用在 LVS 脚本的任何位置。
+
+\subsection{清除冗余}
+
+提取网表中常含没有功能意义的元素：例如 via 单元会生成只有一个 pin、没有任何器件的 subcircuit；孤立的金属岛也会形成不含器件的 subcircuit。
+
+（\ui{purge}）会移除所有悬空 net 与所有不含器件或 subcircuit 的 circuit；\ui{purge\_nets} 只清除悬空 net。悬空 net 指不连接任何器件或 subcircuit 的 net。
+
+\begin{lstlisting}
+netlist.purge netlist.purge_nets
+\end{lstlisting}
+
+\subsection{归一化封装（simplify）}
+
+\ui{simplify} 是 \ui{make\_top\_level\_pins}、\ui{purge}、\ui{combine\_devices} 与 \ui{purge\_nets} 的封装，按如下推荐顺序执行：
+
+\begin{lstlisting}
+netlist.simplify
+\end{lstlisting}
+
+技术细节上，之所以把这序列里包含 \ui{make\_top\_level\_pins}，是因为有 pin 之后 net 就不算悬空，这样 \ui{purge\_nets} 会保留有 label 的 net 的 pin。

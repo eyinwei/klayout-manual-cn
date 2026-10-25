@@ -1,0 +1,16 @@
+# LaTeX 中间文件（build/main.pdf 是产物，保留）
+*.aux
+*.log
+*.out
+*.toc
+*.synctex.gz
+*.fls
+*.fdb_latexmk
+*.xdv
+*.bbl
+*.bcf
+*.blg
+*.run.xml
+
+# 根目录那份重复的 main.pdf，正式产物在 build/main.pdf
+/main.pdf

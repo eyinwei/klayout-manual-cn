@@ -1,0 +1,521 @@
+% Editing Functions —— 由 work/build.py 自动生成，勿手改；改译文请改 work/translations/
+\chapter{Editing Functions}\label{ch:editor}
+
+\section{编辑模式}\label{sec:edit_mode}
+
+只有在 KLayout 处于 edit mode 时才能使用编辑器功能。只要在命令行中加上 \ui{-e} 选项，KLayout 就会进入编辑模式：
+
+\begin{lstlisting}
+klayout -e [<input file>] [-l <layer properties file>]
+\end{lstlisting}
+
+相应地，用命令行选项 \ui{-ne} 可以强制进入不可编辑模式。
+
+在 Windows 上，开始菜单里分别有编辑器模式与查看器模式的入口。也可以把 KLayout 配置为启动时默认使用编辑模式：在 setup 对话框（\menu{File > Setup}）的 \ui{Application} 标签页中勾选 \ui{Edit mode} 复选框。
+
+在编辑模式下，某些优化被关闭，因此加载时间略长、内存占用略高。实际增幅强烈取决于输入文件的特性：例如 OASIS 中的 Shape 阵列在编辑模式下不再原样保留，而是展开成一个个单独的 Shape。
+
+\subsection{取放（pick and drop）原理}\label{sec:pick_and_drop}
+
+多数绘图程序采用“单击并拖动”的范式：按住左键点中一个元素，一直按着把它拖到目标位置。这种范式虽然相当直观，却有一个缺点：在按住鼠标键的同时很难做别的事——特别是无法缩放（难道要同时按下右键、拖出缩放框，再只松开右键？）。为了既能缩放又能拖动，KLayout 采用了“取放”（pick-and-drop）方式。
+
+在 pick-and-drop 中，用左键单击元素把它“取起”，然后移动鼠标（不按任何键）移动它，最后在目标位置左键单击“放下”。由于鼠标键并未按住，鼠标可以自由执行其它操作，只有被拖动的对象“粘”在光标上。
+
+此外，拖动对象的过程中可以用 Shift 与 Ctrl 强制某些方向约束，或覆盖选项（例如 move 或 edit 选项）中设定的约束：按 Shift 时 KLayout 进入正交模式，移动被限制为水平或竖直（若不适用则不作限制）；按 Ctrl 时进入斜向模式，移动被限制为水平、竖直或 45 度斜向；同时按 Ctrl 与 Shift 则解除一切方向约束。
+
+\subsection{编辑器基本选项}\label{sec:editor_options}
+
+编辑模式下用到的大多数工具都有各自的选项，例如画 Path 时要指定宽度与延伸方式。有一个通用的编辑选项设置对话框，可从 \menu{Edit} 菜单选 \ui{Editor Options} 打开，或用快捷键 \kbd{F3}（若未被改键）。
+
+对话框中总有一个通用的设置标签页，并按所选工具另有一个工具专属标签页。通用标签页上可修改以下设置：
+
+\begin{itemize}
+\item Editor grid：每个编辑操作都被限定在此网格上。网格可以关闭、与全局网格对齐（用于标尺与显示的那套），也可以显式指定；它甚至可以是各向异性的，即 y 方向与 x 方向的网格不同。
+\item Connection angle constraint：在画连线（例如 Path 的某一段、Polygon 的某条边）时，该模式决定线段或边是否受限于特定方向。\ui{Any Angle} 模式不作限制；\ui{Diagonal} 模式允许竖直、水平或两个 45 度斜向；\ui{Manhattan} 模式只允许水平与竖直。
+\item Movement direction constraint：拖动（即移动）对象时，该模式决定移动是否受限于特定方向。\ui{Any Direction} 不作限制；\ui{Diagonal} 允许竖直、水平或两个 45 度斜向；\ui{Manhattan} 只允许水平与竖直。
+\item Top level selection mode：勾选复选框时进入顶层选择模式，只选中当前显示 Cell 所在层级上的元素（这里的“顶层”指当前显示 Cell 的顶层）。也就是说，若选中的是子 Cell 中的 Shape，实际选中的是整个子 Cell 的 Instance。不勾选时进入层次选择模式，子 Cell 中的元素也会被选中。该模式允许就地编辑子 Cell。
+\end{itemize}
+
+在设置对话框中做了改动之后，用 \ui{Apply} 或 \ui{Ok} 使其生效。
+
+\subsection{背景组合模式}\label{sec:background_modes}
+
+KLayout 提供多种方式，把新画的 Shape 与已有 Shape 组合。可通过工具栏上的 \ui{Select background combination mode} 工具按钮选择模式：
+
+\klfig[0.55\textwidth]{background_combination_modes.png}{背景组合模式}
+
+可用的模式如下：
+
+\begin{itemize}
+\item Add：默认模式，新画的 Shape 直接加入已有 Shape 之中。
+\item Merge：新画的 Shape 会与已有 Shape 合并。该操作总是生成一个 Polygon，即新画 Shape 与所有与之接触或重叠的 Polygon 的并集；Path 一律转换为 Polygon。此模式等价于布尔“OR”运算。
+\item Erase：新画的 Shape 会从已有 Shape 中减去，可用来在与新画 Shape 接触或重叠的 Shape 上开出缺口或细缝；新画的 Shape 本身消失。此模式等价于布尔“NOT”运算。
+\item Mask：新画的 Shape 充当已有 Shape 的掩模，只有与之重叠的部分保留。此模式等价于布尔“AND”运算。
+\item Diff：新画的 Shape 会反转已有 Shape。此模式等价于布尔“XOR”运算。
+\end{itemize}
+
+\subsection{选区}\label{sec:editor_selection}
+
+某些操作所作用的基本对象集合是 selection（选区），即一组要对之施加操作的 Shape 与 Instance。可以在 \ui{Select} 模式下单击元素建立选区，也可以拖出选择矩形；松开鼠标时，矩形内的所有元素都被选中。
+
+选区可以修改：追加元素（选择元素时同时按 Shift）、移除元素（同时按 Ctrl），或切换选中状态（同时按 Shift 与 Ctrl，即把已选中的去掉、未选中的加入）。
+
+\subsection{局部模式}\label{sec:partial_vs_full}
+
+partial editing（局部编辑）是一项强大的功能，可以对 Shape 做局部修改：可以移动 Polygon、Path 的边或段，删除 Polygon 或 Path 的顶点、边或段，也可以往 Polygon 与 Path 中插入新点。partial editing 支持复杂的局部选区：可以同时选中多条边或多个顶点，一并删除或移动。
+
+普通的选中是“整元素”方式的，此时整个 Shape 被移动或删除。只有在整元素模式下，Shape 或 Instance 才能送入剪贴板。
+
+\section{编辑模式的基本原理}\label{sec:editor_basics}
+
+本节介绍编辑模式的基本工作原理。
+
+\subsection{从零创建版图}\label{sec:create_from_scratch}
+
+要从头开始创建一个空版图，从 \menu{File} 菜单选择 \ui{New}。弹出的表单要求填写几个基本参数：
+
+\begin{itemize}
+\item Top cell：版图中第一个（也是唯一一个）Cell 的名字。
+\item Database unit：数据库单位，即整数坐标与微米之间的换算系数，本质上就是版图的分辨率。
+\item Initial window size：首次打开顶层 Cell 时所显示窗口的尺寸。由于初始视图是空的，没有任何几何参照，指定初始尺寸至少能让“画布”的大小已知。
+\end{itemize}
+
+若在 setup 对话框（\ui{Application} 标签页）中指定了默认的 layer properties 文件，它会自动载入 layer 视图列表。若没有这样的文件，layer 列表初始为空，必须先通过 \menu{Edit > Layer > New} 建好图层，才能画 Shape。
+
+\subsection{新建图层}\label{sec:create_layers}
+
+可以用 \menu{Edit} 菜单中的 \menu{Layer > New Layer} 新建图层。系统会要求输入 GDS 的层号与 datatype 号，以及可选的 OASIS 图层名。按 \ui{Ok} 后图层即被创建并插入 layer 面板。
+
+\subsection{新建 Cell}\label{sec:create_cells}
+
+可以在层次面板的上下文菜单（右键单击 Cell 层次面板）中用 \ui{New Cell} 新建 Cell。系统会要求输入新 Cell 的名字（该名字的 Cell 尚不能存在）以及窗口尺寸。窗口尺寸是显示该 Cell 时视图的初始尺寸，除此之外没有其它含义。
+
+\subsection{画 Polygon}\label{sec:create_polygon}
+
+在工具栏选择 \ui{Polygon} 模式，在 layer 面板中选择新 Polygon 要画在哪个图层，然后在 Polygon 的第一个顶点处左键单击。移动鼠标到下一个顶点，左键单击放下该点，再移到下一个顶点。画出的边会依 connection mode 被限制在某些方向上，各模式的详细说明见第 \ref{sec:editor_options} 节；可用 editor options 对话框（\kbd{F3}）更改模式，编辑过程中也可以改。
+
+要临时约束线段方向，拖动线段时按住 Shift 或 Ctrl，或两者同时按。Shift 施加曼哈顿约束（只允许竖直与水平），Ctrl 在此外还允许斜向，同时按 Shift+Ctrl 则允许任意方向。
+
+在最后一点双击或按 \kbd{Enter} 键结束 Polygon；按 \kbd{Esc} 键取消操作；按 \kbd{Backspace} 键删除最后一段。
+
+拖动 Polygon 的某一段时，版图视图顶部会出现两个输入框。按 \kbd{Tab} 键进入输入框，用 \kbd{Tab} 与 \kbd{Shift+Tab} 在框间跳转，可在其中输入该段向量的数值；按 \kbd{Enter} 会应用这些相对坐标并开始新的一段，按 \kbd{Esc} 退出输入框。
+
+Polygon 永远不会处于“开放”状态：当前顶点与起始顶点之间总会有边相连。视模式不同，这条收尾连接是一条直线，或是若干边的组合。在 \ui{diagonal mode} 下，收尾连接的实现方式有很多种，程序用一些启发式规则挑出一种可行的组合；这套启发式虽不一定足够聪明，但通常能满足需要。
+
+\subsection{画 Box}\label{sec:create_box}
+
+在工具栏选择 \ui{Box} 模式，在 layer 面板中选择新 Box 要画在哪个图层，在第一点处左键单击，移动鼠标到第二点，左键单击即完成。按 \kbd{Esc} 键取消操作。
+
+拖动 Box 时按住 Ctrl 键可把 Box 约束为正方形；按住 Shift 键则让第一点成为 Box 的中心。两键可同时按。
+
+拖动 Box 时，版图视图顶部会出现两个输入框。按 \kbd{Tab} 键进入输入框，用 \kbd{Tab} 与 \kbd{Shift+Tab} 在框间跳转，可在其中输入 Box 的宽与高；按 \kbd{Enter} 应用这些尺寸，按 \kbd{Esc} 退出输入框。
+
+注意：Box 一旦创建就始终保持为 Box，例如不能删掉其中一个顶点来把它变成三角形，那只有 Polygon 才能做到。
+
+\subsection{画 Path}\label{sec:create_path}
+
+在工具栏选择 \ui{Path} 模式，会弹出 editor options 对话框，其中还要求填写 Path 的基本参数，例如宽度与延伸方式（extension scheme）。画 Path 时它会采用该对话框中设定的参数；Path 正在绘制过程中也可以修改这些属性。若选项页被误关，用 \kbd{F3} 快捷键可重新打开。
+
+着手画 Path 时，先在 layer 面板中选择要画在哪个图层，在第一个顶点处左键单击，移动鼠标到第二个顶点单击放下，如此继续到最后一个顶点。在最后一点双击或按 \kbd{Enter} 键结束 Path；按 \kbd{Esc} 键取消操作；按 \kbd{Backspace} 键删除当前段并退回上一段。
+
+要临时约束线段方向，拖动线段时按住 Shift 或 Ctrl，或两者同时按。Shift 施加曼哈顿约束（只允许竖直与水平），Ctrl 在此外还允许斜向，同时按 Shift+Ctrl 则允许任意方向。
+
+拖动 Path 的某一段时，版图视图顶部会出现两个输入框。按 \kbd{Tab} 键进入输入框，用 \kbd{Tab} 与 \kbd{Shift+Tab} 在框间跳转，可在其中输入该段向量的数值；按 \kbd{Enter} 会应用这些相对坐标并开始新的一段，按 \kbd{Esc} 退出输入框。
+
+和 Polygon 一样，Path 的各段也受 connection angle constraint 所施加的方向限制，各模式的详细说明见第 \ref{sec:editor_options} 节；可用 editor options 对话框（\kbd{F3}）更改模式，编辑过程中也可以改。
+
+Path 常被用来当作导线。KLayout 可以配置 via，使得能在图层之间切换，并在两条 Path 重叠处于层间放置一个 via。使用 via 功能之前，KLayout 必须先具备 via 定义。via 本质上就是 PCell，只是需要支持一组特定参数：via PCell 需要暴露若干描述符来定义该 PCell 所支持的选项（例如它所连接的两层）。
+
+\subsection{创建 Text 对象}\label{sec:create_text}
+
+在工具栏选择 \ui{Text} 模式，会弹出 editor options 对话框，其中还要填写文本内容。别忘了点 \ui{Apply} 使当前字符串生效。若对话框被误关，可用 \kbd{F3} 快捷键重新打开。
+
+要真正放置文字，把鼠标移到目标位置左键单击即可。
+
+Text 可以带一个尺寸，该尺寸会存入 GDS2 文件（OASIS 不支持此特性）。只有选择了可缩放字体（\ui{Default} 字体不可缩放）且启用了文字缩放时，文字尺寸才会在版图中体现出来：在 setup 对话框的 \ui{Display} 标签页的 \ui{Text font} 选择框里挑一个可缩放字体，并在同一标签页勾选 \ui{Apply text scaling and rotation}。
+
+Text 还可以旋转，但同样只有在启用了文字缩放与旋转后才会体现。放置文字时按右键可把它旋转 90 度（逆时针）。
+
+\subsection{放置 Cell Instance}\label{sec:create_instance}
+
+在工具栏选择 \ui{Instance} 模式，会弹出 editor options 对话框，其中还要求填写一些 Instance 参数。最重要的自然是所要放置的 Cell。几何方面可以指定旋转角、设置镜像选项，也可以把 Instance 指定为规则阵列；作为阵列时，该 Instance 表示该 Cell 在规则网格上的多次放置。
+
+要放下 Instance，把鼠标移到目标位置左键单击。移动过程中按右键可把 Instance 旋转 90 度（逆时针）；按 \kbd{Esc} 键取消操作。
+
+自 0.22 版起 KLayout 支持库（library）。库提供版图之外的 Cell，这些 Cell 会被导入版图并在版图内保存一份副本。同时 KLayout 仍保留对原始版图的引用，因此库发生变化后，重新加载版图时该 Cell 会被替换。从库导入的 Cell 在 Cell 树与版图中显示为 \ui{Library.Cell} 形式，其中 Library 是库名。
+
+库在 Cell 名字右侧的下拉框中选择；也可以用 \ui{...} 按钮浏览所选库中可用的 Cell。
+
+库是提供常用版图构件的便捷方式。此外 KLayout 现在还支持 PCell（参数化 Cell）：这类 Cell 没有静态内容，而是由一段代码按该 PCell 类型专属的一组参数动态生成。例如圆有两个参数：圆出现在哪个图层，以及圆的半径。
+
+PCell 由库提供。从库中选中某个 PCell 时，Instance 属性页还会多出一个面板用于编辑 PCell 参数；可用的参数取决于 PCell 的类型。
+
+KLayout 自带一个标准库 \ui{Basic}，其中有若干基本的曲线形状类型以及一个文字生成器。
+
+PCell 的实现有一个独特之处：PCell 可以使用“引导图形”（guiding shape）。引导图形本身不会作为版图出现，而是被 PCell 用来推导自己的几何。例如 \ui{Basic} 库中的 \ui{rounded path} PCell 就是用一条 Path 作为引导图形，对这条 Path 做处理以得到最终的形状。
+
+引导图形画在 Cell 边界层上，可以用常规的图形操作手段处理（特别是移动与局部编辑）；其图形属性也可以用 \menu{Edit > Properties} 编辑。
+
+库的更多说明见第 原文对应章节 节，PCell 的细节见第 原文对应章节 节。
+
+\subsection{移动选区}\label{sec:move_sel}
+
+整个选区可以在 \ui{Move} 模式下移动。若已有元素被选中，进入 \ui{Move} 模式后在某个位置左键单击指定参考点，该参考点即作为“拖拽把柄”，每个元素都相对它移动。若进入移动模式时没有选中任何元素，则直接单击要移动的元素，再左键单击把它放到别处。
+
+移动过程中按右键可把整个选区旋转 90 度（逆时针）；按 \kbd{Esc} 键取消操作。
+
+移动受 movement direction constraint 约束，各模式的细节见第 \ref{sec:editor_options} 节。例如在曼哈顿模式下只允许水平与竖直移动。移动鼠标时按 Shift（正交）、Ctrl（斜向）或同时按 Shift 与 Ctrl（任意角度）可临时覆盖全局约束。
+
+移动选区时，版图视图顶部会出现两个输入框。按 \kbd{Tab} 键进入输入框，用 \kbd{Tab} 与 \kbd{Shift+Tab} 在框间跳转，可在其中输入位移量；按 \kbd{Enter} 应用该位移，按 \kbd{Esc} 退出输入框。
+
+要施加确定的位移，也可以用 \menu{Edit > Selection} 菜单中的 \ui{Move By}：弹出的对话框可以按微米指定水平与竖直移动距离，正值向右或向上、负值向左或向下。该对话框同样适用于局部模式，因此可以把版图中的边或局部精确地按给定方向移动给定距离。
+
+类似地，\ui{Move To} 可以把选区重新定位到某个点。所选的点可以相对于选区的边界框指定：例如以选区左下角为参考点，并在对话框中给出某个位置，则选区会被移动，使其边界框左下角与给定坐标重合。
+
+\subsection{选区的其它变换}\label{sec:trans_sel}
+
+利用 \menu{Edit} 菜单中 \menu{Selection} 子菜单里的功能，可以对选区做 x 轴或 y 轴翻转、整体旋转，或按给定距离移动。例如 \ui{Flip Vertically} 就是沿 x 轴翻转选区；用 \menu{Selection} 子菜单中的 \ui{Rotation By Angle} 则可以把选区旋转任意角度。
+
+\subsection{局部编辑}\label{sec:partial}
+
+对象创建之后需要修改时，就要用到局部编辑（partial editing）。“局部”指的是只编辑 Polygon 或 Path 的一部分，例如只移动 Polygon 的一个顶点或一条边。局部编辑模式还允许删除单个顶点或边，也允许插入新的顶点或边。在局部编辑模式下可以同时选中多条边或多个顶点，甚至可以先选中整个 Shape 再做局部处理。
+
+移动所选局部时受 movement direction constraint 约束，各模式的细节见第 \ref{sec:editor_options} 节。例如在曼哈顿模式下只允许水平与竖直移动。同样，移动鼠标时按 Shift（正交）、Ctrl（斜向）或同时按 Shift 与 Ctrl（任意角度）可临时覆盖全局约束。
+
+点击工具栏上的 \ui{Partial} 按钮进入局部模式，此后单击即可选中某个局部（边或顶点），也可以拖出选择矩形。与常规选择一样，Shift 与 Ctrl 修饰键可以把新内容追加到已有选区，或从选区中移除。局部选择同样受“仅顶层”约束（该模式的说明见第 \ref{sec:editor_options} 节）。
+
+直接单击某个条目会立即进入 \ui{move} 模式：在目标位置摆好该元素，左键单击放下即可；按 \kbd{Esc} 取消操作。存在复杂的选区时，要单击选区中某个条目（是边或顶点本身，而不是它们所属的 Shape）才进入移动模式。移动过程中版图视图顶部会显示两个输入框，可在其中输入位移量。
+
+移动局部时受若干约束，例如单独的边只能沿垂直于其当前位置的方向移动；此外移动被限制在编辑网格上。
+
+选中的条目可以用 \menu{Edit} 菜单的 \ui{Delete} 功能或按 \kbd{Delete} 键删除。若剩余顶点不足以构成合法对象（例如少于 3 个点的 Polygon），该对象会被整体删除。
+
+在边或 Path 的段上双击，会在光标所在位置于该边上新建一个点。要在 Path 上做出一个“折弯”，可以在该段上放两个新顶点，再把两点之间的那一段从原来的中心线移开：这基本上需要对 Path 中心线双击两次，对由此形成的新段单击一次，再单击一次把它放到新位置。
+
+\subsection{把 Shape 移到其它图层}\label{sec:move_layer_sel}
+
+选中的 Shape 可以整体移到别的图层：从 \menu{Edit} 菜单的 \menu{Selection} 子菜单选 \ui{Change Layer}，所有选中的 Shape 都会被移到 layer 列表中当前图层（带矩形标记的那个）上。Shape 不会跨层次移动，只在它们所在的 Cell 内换层。
+
+所有图层（源与目标）必须位于同一个版图中。要把 Shape 移到别的版图，请用复制粘贴。
+
+也可以在 Shape 属性中修改图层，效果同样是把这些 Shape 移到别的图层。
+
+\subsection{其它图层操作}\label{sec:layer_ops}
+
+可以用 \menu{Edit} 菜单 \menu{Layer} 子菜单中的 \ui{Edit Layer Specification} 修改图层定义：弹出的对话框中可编辑 layer 面板里当前选中图层的层号、datatype 与（OASIS）名字，保存后这些 Shape 就被映射到新的图层上。
+
+可以用 \menu{Edit} 菜单 \menu{Layer} 子菜单中的 \ui{Clear Layer} 清空图层，范围可选按 Cell、按某个 Cell 的层次，或所有 Cell。
+
+图层可以用 \menu{Edit} 菜单 \menu{Layer} 子菜单中的 \ui{Copy Layer} 复制，用 \ui{Delete Layer} 彻底删除。
+
+\subsection{复制与粘贴选区}\label{sec:copypaste_sel}
+
+复制粘贴当然也照常支持，而且可以在版图之间复制 Shape：打开两个版图，即可把 Shape 从一个版图移到另一个。Shape 会被映射到与源版图中相同的图层；若目标版图中还没有该图层，会自动创建。
+
+选区中的 Shape 按其在当前 Cell 中的呈现方式直接复制到剪贴板。这意味着，若把它们粘贴到另一个版图，位置保持不变，但会打平放进当前 Cell 中。这提供了一条打平（flatten）层次的办法：在 editor options 对话框中选择层次选择模式（取消 \ui{top level only}），选中要打平的 Shape，再把它们复制到另一个 Cell。
+
+在非层次选择模式（即 \ui{top level only} 选择模式）下，或在层次层级受限时单击 Cell 边框，也可以选中 Instance。把 Instance 复制到剪贴板有两种方式：
+
+\begin{itemize}
+\item Shallow copy：只复制 Instance 本身。粘贴到任何目标版图时，会查找该 Instance 所指的 Cell 并把它实例化。
+\item Deep copy：不仅复制 Instance，连被实例化的 Cell 一并复制。粘贴到别的版图时，该 Cell 也会一并建立；若已存在同名 Cell，则新建一个 variant 并实例化它。
+\end{itemize}
+
+\subsection{删除 Cell}\label{sec:del_cell}
+
+要删除整个 Cell，在层次浏览器中选中它，然后在上下文菜单（右键）中选择 \ui{Delete Cell}。此时提供三种模式：
+
+\begin{itemize}
+\item Shallow delete：只删除该 Cell 本身（其 Shape 与 Instance），不删除它引用的任何 Cell。这些被引用的 Cell 此后可能不再被引用，因而可能作为新的顶层 Cell 出现在版图中。
+\item Deep delete：删除该 Cell 及其所有子 Cell，除非子 Cell 还被别的（未被删除的）Cell 引用。用这种模式可以移除一整套层次而不产生副作用。
+\item Complete delete：删除该 Cell 及其所有子 Cell，即使其它 Cell 仍在引用这些子 Cell。
+\end{itemize}
+
+\subsection{重命名 Cell}\label{sec:rename_cell}
+
+要重命名 Cell，在层次浏览器中选中它，然后在上下文菜单（右键）中选择 \ui{Rename Cell}，输入新名字即可。新名字不能与已有 Cell 重名。
+
+\subsection{复制与粘贴 Cell}\label{sec:copypaste_cell}
+
+整个 Cell 也可以复制到剪贴板：在层次浏览器中选中该 Cell（确保焦点在该窗口），然后从 \menu{Edit} 菜单选择 \ui{Copy} 或 \ui{Cut}。要把这样的 Cell 粘贴到目标版图，从 \menu{Edit} 菜单选择 \ui{Paste}。
+
+提供两种复制模式。当选择 \ui{copy} 或 \ui{cut} 且该 Cell 实例化了其它 Cell 时，会弹出对话框供选择模式：
+
+\begin{itemize}
+\item Shallow copy：只复制该 Cell 本身，不复制子 Cell。复制出的 Cell 调用与原来的 Cell 相同的那些 Cell。若把 Cell 复制到另一个版图（另一个标签页），子 Cell 不会随行，此时会创建“幽灵”Cell，或以同名已有 Cell 充当子 Cell。
+\item Deep copy：把该 Cell 连同其子 Cell 一起复制。所有 Cell 都随行，粘贴时会把全部子 Cell 的副本一并建立。
+\end{itemize}
+
+当 Cell 被粘贴到另一个版图、而那里已有同名“幽灵 Cell”时，粘贴的 Cell 会取代该幽灵 Cell。若那里已有同名普通 Cell，则会新建一个 Cell variant，并给粘贴的 Cell 加后缀改名以保证名字唯一。
+
+用深复制模式把 Cell 从一个版图复制到另一个版图，是把两个版图合并成一个的简便办法：例如把第一个版图的顶层 Cell 复制到第二个版图，再在新顶层 Cell 中同时把两者实例化。
+
+\section{基本编辑操作}\label{sec:editor_operations}
+
+本节介绍编辑版图时的一些基本操作。
+
+\subsection{整版图变换}\label{sec:layout_transforms}
+
+有一些函数可以对整个版图做变换。整版图变换会以相同方式作用于所有 Cell，每个 Cell 都按同样方式修改。该功能对版图缩放尤其有用。值得注意的是，以这种方式缩放版图不会产生带放大倍率的 Instance。
+
+版图变换函数位于 \menu{Edit > Layout} 中（翻转、旋转、缩放、移动）。
+
+\subsection{搜索与替换}\label{sec:search_replace}
+
+KLayout 提供“搜索与替换”功能，既有基本的查找、查找并替换，还有一个非常通用而强大的扩展功能——custom query（见下文）。对话框位于 \menu{Edit} 菜单的 \ui{Search and replace}。
+
+对话框左侧面板有四个标签页：\ui{Find}、\ui{Delete}、\ui{Replace} 与 \ui{Custom}，其功能分别说明如下。
+
+对话框左侧显示会产生结果的操作（例如 Find）的结果。结果以列表呈现，条目内容随操作性质与参数而不同。若条目代表版图对象（例如某个 Shape 或 Cell Instance），列表中选中的条目会在版图中高亮以指示其位置。为避免性能问题，列表长度有限制。
+
+点左下角的 \ui{Configure} 按钮可打开配置页，用于设定该对话框的行为；在 setup 对话框的 \ui{Browsers > Search Result Browser} 中也能找到它。
+
+\subsection{Find（查找）}
+
+\ui{Find} 标签页的功能很简单：可以指定各种条件，按下 \ui{Find} 按钮后列出所有符合条件的对象。
+
+该功能的参数包括：对象类型、Cell 范围以及对象特定的条件。对象类型可以是 \ui{Instances} 或某种 Shape；对 Shape 还可把类型限定为 \ui{Box}、\ui{Polygon}、\ui{Path} 或 \ui{Text}，从而启用各自的专属条件。
+
+Cell 范围（cell context）可取以下之一：
+
+\begin{itemize}
+\item Current cell：只看当前 Cell，忽略子 Cell。
+\item Current cell and below：看当前 Cell 及其所有子 Cell，子 Cell 的各次实例化都会被计入。
+\item All cells：逐个 Cell 单独查看，但不考虑 Cell 如何被实例化。
+\end{itemize}
+
+视对象类型，可纳入条件的参数各不相同。每个条件针对一个具体参数，通常由一个运算符（小于、不大于、等于……）与一个值组成，用来检查该参数的值。长度与面积以微米或平方微米为单位给出。
+
+字符串值可以用波浪号匹配运算符（\textbackslash{}ui\{\textasciitilde{}\}）及不匹配运算符（\textbackslash{}ui\{!\textasciitilde{}\}）按 glob 通配符比较。glob 通配符就是命令行里文件名所用的那一套：\ui{*} 表示任意长度字符序列，\ui{?} 表示单个任意字符。例如：
+
+\begin{kldesc}
+\item A*
+\end{kldesc}
+
+字符串必须以大写“A”开头
+
+\begin{kldesc}
+\item *A*
+\end{kldesc}
+
+字符串某处必须含大写“A”
+
+\begin{kldesc}
+\item ABC?
+\end{kldesc}
+
+“ABC”后跟任意一个字符
+
+\begin{kldesc}
+\item N\{AND,OR\}
+\end{kldesc}
+
+“NAND”或“NOR”
+
+\begin{kldesc}
+\item A[0-9]
+\end{kldesc}
+
+“A”后跟一个数字
+
+\begin{kldesc}
+\item A[\textasciicircum{}0-9]
+\end{kldesc}
+
+“A”后跟一个非数字字符
+
+若值字段留空，则不对该参数作检查。所有被检查的条件都满足，对象才会出现在结果页中。
+
+\subsection{Delete（删除）}
+
+与查找页类似，同样要求对象类型、Cell 范围与对象特定的条件。
+
+按 \ui{Delete All} 按钮会直接删除所有符合条件的对象。
+
+按 \ui{Select+Delete} 按钮时，符合条件的对象先显示在结果页中（与 Find 类似），随后可以从中挑出部分或全部，按列表下方的 \ui{Delete} 按钮删除。
+
+\subsection{Replace（替换）}
+
+与查找页类似，同样要求对象类型、Cell 范围与对象特定的条件。此外还可以为各参数指定替换值；某参数的替换值字段留空则不作替换。
+
+对使用 glob 通配符匹配的字符串，匹配到的名称片段可以在替换串中复用。例如运算符为波浪号（\textasciitilde{}）、作用于某 Text 的字符串，匹配串写作 \ui{A(*)}，替换串可写为 \textbackslash{}ui\{B\textbackslash{}textbackslash\{\}1\}，其中 \ui{1} 表示匹配串中第一个括号的内容，于是该设置会把开头的“A”全都换成“B”。
+
+按 \ui{Replace All} 按钮会对所有符合条件的对象施加替换参数。
+
+按 \ui{Select+Replace} 按钮时，符合条件的对象先显示在结果页中（与 Find 类似），随后可以从中挑出部分或全部，按列表下方的 \ui{Replace} 按钮替换。
+
+\subsection{Custom queries（自定义查询）}
+
+这个页面才把这套对话框的威力完全发挥出来。custom query 不仅能实现前三个页面（查找、删除、替换）的功能，还能做到远超这些简单场景的事情。
+
+custom query 是类似 SQL 的语句，其中可嵌入表达式，并有一套描述 Shape 或 Cell 实例化细节的丰富语言。详细说明见第 原文对应章节 节。
+
+custom query 页面上有一个输入框用于填写查询，下方有 \ui{Execute} 按钮执行查询。最近用过的查询可以用输入框下方的下拉框调回编辑框。custom query 可以按给定名字保存并复用，已保存查询的列表可用其右侧的按钮管理；各按钮功能见其工具提示。
+
+若切换标签页后再切回，custom query 会按另一标签页上当前所选功能对应的查询进行更新。
+
+\subsection{层次操作：打平 Instance、由选区建 Cell、在层次中上移}\label{sec:hier_ops}
+
+KLayout 提供若干操作，可以把 Shape 或 Instance 在层次中上移或下移，都可通过 \menu{Edit} 菜单下的 \menu{Selection} 子菜单进入。
+
+\begin{itemize}
+\item Flatten instances：用被实例化 Cell 的内容替换所选 Instance。KLayout 会询问是展开所有层级，还是只展开该 Cell 的第一层；若展开所有层级，该 Cell 就被解析成当前 Cell 层次中的一组 Shape。
+\item Move up in hierarchy：只适用于当前 Cell 的子 Cell 内部的选区（因此在 \ui{top level only} 选择模式下没有意义）。选中的 Shape 与 Instance 被上提到当前 Cell 这一层，并从原 Cell 中移除。若想不破坏性地把 Shape 上提，可以先复制再粘贴，这相当于对所选 Shape 做一次显式打平。
+\item Make cell from selection：把当前选中的对象移出，放进一个可以指定名字的新 Cell 中。
+\end{itemize}
+
+\subsection{生成裁剪片}\label{sec:clip}
+
+KLayout 提供一个工具，可以从给定 Cell 生成矩形裁剪片（clip）。可以指定一个或多个矩形，当前 Cell 沿这些矩形的边被切开，每个矩形生成一个新的 Cell 存放该矩形范围内的内容；若指定了多个矩形，所有裁剪片最后会归入一个主顶层 Cell，它在 Cell 层次中作为新的顶层 Cell 出现。
+
+裁剪矩形可以由坐标给出，也可以取自另一个图层（该图层必须含 Box，这些 Box 会一并复制到输出中），或取自标尺：此时以标尺的起点与终点作为裁剪矩形的角点。因此不妨为此专门建一个 Box 外观的标尺类型。
+
+裁剪是按层次进行的：子 Cell 也会被裁剪，可能因此产生 variant（若干裁剪片可以共用同一个 variant）。这样就能高效地从大型版图生成大块裁剪片。提示：若版图中含 45 度之类任意旋转角的 Cell Instance，裁剪结果不会完全精确。
+
+\subsection{打平 Cell}\label{sec:flatten}
+
+“平坦”Cell（flat cell）是没有层次的 Cell，即只含 Shape、不含任何子 Cell Instance。平坦 Cell 与其它 Cell 断开联系，因此打平是“冻结”某个 Cell 内容的一种手段：Cell 一旦打平，再改动其它 Cell 都不会影响它，也不会影响该 Cell 在别处出现的样子。反过来，平坦 Cell 逐个存储每个 Shape，因此无法共享几何。
+
+层次化的 Cell 可以通过 \menu{Edit > Cell > Flatten Cell}，或 Cell 列表上下文菜单中的 \ui{Flatten Cell} 打平。该操作提供若干选项，例如要打平多少级层次，以及如何处理因该操作而变得孤立的子 Cell（orphan cell）：启用 prune 选项后，所有不再被需要的子 Cell 都会被删除，否则会生成新的 Cell。
+
+\ui{Flatten} 也可以作用于 Instance：此时该 Cell Instance 被移除，代之以该 Cell 内部的对象。因此 Instance 打平就是把某个 Cell 的内容拉进父 Cell，好处之一是可以直接编辑这些内容，而不必改动子 Cell 本身，从而避免因改动子 Cell 而在其所有实例化处产生连带影响。
+
+按 Instance 打平可用 \menu{Edit > Selection > Flatten Instances}；同样可以选项指定要打平的层次级数以及如何处理 orphan cell。
+
+\subsection{拆解阵列}\label{sec:resolve_arrays}
+
+Instance 阵列便于生成大量的规则 Cell 排布。有时需要把阵列拆开，例如要删除或修改阵列中的某一个 Instance。一种办法是创建 Cell variant（见第 \ref{sec:create_variants} 节），但那样也会复制被实例化的 Cell。
+
+\menu{Edit > Selection} 中的 \ui{Resolve Arrays} 功能可以把阵列拆成一个个独立的 Instance，随后即可单独编辑。
+
+\subsection{PCell 操作}\label{sec:pcell_operations}
+
+若某个 PCell 由“引导图形”派生而来，就可以从 Shape 创建 PCell。\ui{Basic} 库中的 PCell 除少数例外都支持由引导图形派生。例如，选中若干普通 Polygon 后选 \menu{Edit > Selection > Convert To PCell}，并把 PCell 选为 \ui{Basic.ROUND\_POLYGON}，就能得到圆角 Polygon。
+
+PCell 可以通过 \menu{Edit > Cell > Convert Cell To Static} 或 \menu{Edit > Layout > Convert All Cells To Static} 转成普通 Cell。普通（静态）Cell 可以单独编辑，但不再提供控制该 Cell 外观的参数。
+
+\subsection{图层布尔运算}\label{sec:layer_boolean}
+
+KLayout 自带一组布尔运算，位于 \menu{Edit} 菜单的 \menu{Layers} 子菜单中（\kte{Boolean Operations} 与 \kte{Merge} 两个功能）。点击后会弹出对话框，可指定模式、输入图层、输出图层以及其它一些选项。
+
+\begin{itemize}
+\item AND：交集。输出图层包含图层 A 与图层 B 的 Shape 相互重叠的所有区域。
+\item A NOT B：差集。输出图层包含图层 A 的 Shape 未与图层 B 的 Shape 重叠的所有区域。
+\item B NOT A：差集。输出图层包含图层 B 的 Shape 未与图层 A 的 Shape 重叠的所有区域。
+\item XOR：对称差。输出图层包含在两个图层中仅出现于其一的区域。
+\end{itemize}
+
+此外还提供 MERGE 运算，这是单图层操作，把该层上的所有 Shape 并起来。其特色是允许指定最小重叠数：0 表示只要有一个 Shape 就产生输出，1 表示需要两个 Shape 重叠才产生输出，依此类推。此规则不适用于单个 Polygon：Polygon 自身的自重叠不计入。
+
+所有运算都可以在三种层次模式下进行：
+
+\begin{itemize}
+\item Flat：两个图层都打平，结果放入当前顶层 Cell。
+\item Top cell：只在顶层 Cell 的 Shape 上做运算。
+\item Cellwise：在当前顶层 Cell 之下的所有 Cell 上逐个做运算。该模式仅在两个输入与输出的版图相同时允许。
+\end{itemize}
+
+前两种模式下，源版图与目标版图可以不同，前提是所有版图都加载在同一视图中。这样就可以把不同版图的图层组合起来，例如用 XOR 比对它们。
+
+KLayout 布尔运算还有一个特色：可以选择“尖角相接”（kissing corner）情形如何处理，提供两种模式：
+
+\begin{itemize}
+\item Maximum coherence：输出尽量少而连贯的 Polygon。这些 Polygon 可能多次包含同一个点，因为轮廓可以回到同一点而不闭合。
+\item Minimum coherence：输出尽量多的、可能彼此相触的 Polygon。
+\end{itemize}
+
+下面两张截图演示对两个矩形做 XOR 时 maximum coherence（左）与 minimum coherence（右）两种模式的结果。
+
+布尔运算目前是以平坦方式实现的，基于全层级的边表示：若要求 \ui{flat} 模式，整个图层会被打平并转成一组边，再由处理器在其上运算。对超大型版图这会带来巨大的资源需求，目前不建议用于此类场合。
+
+布尔处理器采用迭代方式以覆盖网格吸附效应，因而精度很高，但比单遍扫描线实现略慢，性能损失约为 2 倍。
+
+\subsection{图层 sizing}\label{sec:layer_size}
+
+sizing（尺寸调整）运算可以把某图层的 Shape 按给定偏置放大或缩小，偏置按边施加：正值放大，负值缩小。偏置可以分别给出水平与竖直方向的数值，但两者的符号必须相同（例如 \ui{0.5,0} 或 \ui{1.0,0.2}，而不能是 \ui{0.2,-0.2}）。
+
+sizing 功能位于 \menu{Edit} 菜单的 \menu{Layers} 子菜单中。弹出的对话框可指定输入与输出图层，以及以微米为单位的 sizing 值：一个数值表示 x、y 方向同等缩放，或用逗号分隔的两个数值（例如 \ui{0.2,0.1}）分别指定。
+
+与布尔运算一样，可以指定层次模式与尖角相接的处理方式（各模式说明见第 \ref{sec:layer_boolean} 节）。此外，锐角的截断（cutoff）策略可从“严格”到“近乎不限”中选择。下面的截图演示 \ui{strict}（红色）到 \ui{weak}（紫色）各截断模式的效果。
+
+\klfig[0.92\textwidth]{size_modes.png}{sizing 的截断模式}
+
+\subsection{按 Shape 的布尔运算}\label{sec:shape_boolean}
+
+布尔运算也可作用于所选的 Shape 集合，这类运算使用“主选区”（primary）与“次选区”（secondary）的概念：主选区包含第一步选中的所有 Shape，次选区包含随后按住 Shift 修饰键追加选中的所有 Shape。
+
+以下操作位于 \menu{Edit} 菜单的 \menu{Selection} 子菜单中：
+
+\begin{itemize}
+\item Merge：把主选区与次选区中的所有 Shape 合并，结果写入主选区所在图层。
+\item Intersection：求主选区与次选区的交集（AND），结果写入主选区所在图层。
+\item Subtraction：求主选区（A）与次选区（B）的差集（A NOT B），结果写入主选区所在图层。
+\end{itemize}
+
+\subsection{按 Shape 的 sizing}\label{sec:shape_size}
+
+选中的 Shape 可以按给定的放大与缩小距离做 sizing，用法类似图层操作但选项更少。sizing 功能位于 \menu{Edit} 菜单的 \menu{Selection} 子菜单中，弹出的对话框要求输入 sizing 值（以微米为单位：一个数值表示 x、y 同等缩放，或逗号分隔的两个数值分别指定 x、y 方向）。
+
+\subsection{对象对齐}\label{sec:object_align}
+
+该操作使用主选区与次选区的概念：主选区包含第一步选中的所有 Shape，次选区包含随后按住 Shift 修饰键追加选中的所有 Shape。
+
+对象对齐功能可以把次选区中的所有对象对齐到主选区的对象上（即主选区的对象只提供参考点，本身不被移动）。“对象”可以是 Shape，也可以是 Cell 的 Instance；Cell Instance 以其边界框参与对齐，边界框既可以只按可见图层计算，也可以按所有图层计算。
+
+水平与竖直方向可以分别指定对齐方式。水平方向可取 \ui{none}（不变）、\ui{left}（左边对齐）、\ui{center}（中心对齐）或 \ui{right}（右边对齐）；竖直方向可取 \ui{none}、\ui{bottom}、\ui{center} 或 \ui{top}。
+
+对齐功能位于 \menu{Edit} 菜单的 \menu{Selection} 子菜单中。弹出的对话框可指定对齐方式，以及 Cell Instance 边界框的计算方式。
+
+\subsection{圆角处理}\label{sec:round_corners}
+
+某些应用（例如功率器件）希望用圆角代替尖角，以限制电场。KLayout 为此提供了一种便捷做法：先用 90 度尖角画出结构，再按给定半径把角“软化”成圆角，得到的 Polygon 可以直接写进 GDS 文件——尽管 GDS 本身并不支持圆弧。
+
+有意思的是：圆角功能可以按 Polygon 逐个重新施加在这样得到的几何上。也就是说，即便这些被处理过的 Polygon 已存进 GDS 或被其它方式改动，仍能重建原始几何并修改圆角半径，无需特殊的几何对象或特殊的 GDS 标注。这一要求带来了一些（可能较弱的）限制：
+
+\begin{itemize}
+\item 每个角上的点数不能太少（目前整圆至少 32 点）。
+\item 原始几何不得含尖角，且原始各段长度至少为圆角半径的两倍。
+\item 角的各段必须能被识别为“角”，即相邻边之间的角度须“接近”180 度。这对这类段的最小长度以及它们在数据库单位下的表示精度提出了限制，归根结底是数据库单位下的某个长度下限。
+\end{itemize}
+
+下面的截图演示圆角功能。可以看到在这个例子里，“内角”与“外角”需要允许指定不同的半径。
+
+\klfig[0.92\textwidth]{round_corners.png}{内角与外角使用不同半径的圆角}
+
+圆角功能作用于所选的 Shape，位于 \menu{Edit} 菜单的 \menu{Selection} 子菜单中。弹出的对话框可指定半径值以及期望的分辨率。若所选 Polygon 此前已有圆角，会先去掉圆角、还原原始 Polygon，再施加新的圆角；把半径指定为 \ui{0} 则可去除圆角。
+
+\subsection{调整 Cell 原点}\label{sec:adjust_origin}
+
+Cell 的原点很重要，因为它是 Cell Instance 的实例化锚点。原点调整功能可以把原点移到相对于 Cell 边界框的某个位置：可以是边界框的中心、某个角，或某条边的中点。边界框既可以按所有图层计算，也可以只按可见图层计算。
+
+若勾选 \ui{Adjust instances in parents} 复选框，该 Cell 的各 Instance 会朝相反方向调整，于是 Cell 本身实际未变，只是在局部上版图的原点被挪了位置。
+
+原点调整功能位于 \menu{Edit} 菜单的 \menu{Cell} 子菜单中。
+
+\subsection{创建 Cell variant}\label{sec:create_variants}
+
+当你只想编辑某个 Cell 的某一个 Instance、而不想改整个 Cell 时，KLayout 提供了一个很有用的功能。编辑 Cell 意味着改动会出现在该 Cell 被放置的每一处；若只想在某一处改动版图、不希望波及其它地方，这就未必合适了。
+
+常规做法是复制该 Cell，把某个 Instance 换成新 Cell，再编辑新 Cell。这相当繁琐，尤其当存在阵列 Instance 而只需修改其中一个时：必须先把阵列拆开，单独隔离出那一个 Instance，才能把它换成新 Cell。
+
+KLayout 提供了自动完成此事的办法，位于 \menu{Edit > Selection > Make Cell Variants}。其做法大致是：对每个选中对象，沿层次一直追溯到当前 Cell，在沿途遇到的每个 Cell 都创建一份新的 Cell 副本，并用这些新 Cell 取代原来的。
+
+效果是：用过 \ui{Make Cell Variants} 之后就可以随意修改（例如删除）选区，而不会产生任何不良的连带影响。
+
+该功能还能转换阵列 Instance，并隔离出阵列中的某些 Instance。下面几张截图演示这一点。
+
+初始情形：某个 Cell 以 3×3 阵列被实例化 9 次，并且选中了其中某个 Instance 内部的一个 Shape。随后两张截图分别显示全层级视图与仅顶层视图，以表明该 Cell 被放置了 9 次。
+
+\klfigpair{create_cv1.png}{全层级视图：Cell 以 3×3 阵列放置}{create_cv2.png}{仅顶层视图}
+
+如果把这个 Shape 删掉，它在所有 9 个 Instance 中都会消失——假定这并不是想要的。此时可以用 \ui{Make Cell Variants} 为选中该 Shape 的那一个 Instance 创建 Cell variant。做完之后，其中一个 Instance 会被替换为该 Cell 的副本，命名为 \ui{INV2\$1}，情形如下：
+
+\klfig[0.55\textwidth]{create_cv3.png}{Make Cell Variants 之后：一个 Instance 被替换为副本 INV2\$1}
+
+现在就可以删掉这一个 Shape，而对其它 Instance 毫无影响：
+
+\klfig[0.55\textwidth]{create_cv4.png}{删除单个 Shape 后其余 Instance 不受影响}
+
+\section{高级编辑操作}\label{sec:editor_advanced}
+
+本节介绍编辑模式中较为高级的功能。

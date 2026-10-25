@@ -1,0 +1,261 @@
+% Advanced Topics —— 由 work/build.py 自动生成，勿手改；改译文请改 work/translations/
+\chapter{Advanced Topics}\label{ch:advanced}
+
+\section{XOR 工具}\label{sec:xor}
+
+XOR 工具通过对两个版图逐层执行相应的布尔运算，实现几何 XOR（非对称差还可用 ANOTB 与 BNOTA）。从 \menu{Tools} 菜单的 \ui{XOR Tool} 启动。目前可以比较所有图层或仅可见图层；比较的是某个版图与另一个版图中同名同号的对应图层。
+
+目前的实现采用平坦的 XOR 处理器，因此大体上只适用于中小型版图，不利用层次结构；这基本上排除了对层次很深的应用（例如存储器阵列）。平坦方式带来的内存占用可以用 tiling 功能缓解——把运算限制在一个尺寸有限的 tile 上。这能降低内存峰值，但不会缩短运行时间。
+
+XOR 工具可以指定容差。容差本质上是在布尔运算之后做一次 undersize，借此抑制小的标记，这对剔除因被比较版图间细小差异而产生的标记特别有用。可以指定多个容差，此时会做多次 undersize，生成若干容差各不相同的图层集合。
+
+在输入框中填入 tile 尺寸即可启用 tiling。对标准单元块这类半平坦版图，1000 微米是个不错的起点；tile 尺寸的选择主要决定内存需求。
+
+XOR 工具可以把结果送进 marker 数据库，或写入另一个版图（也可以是某个输入版图）。模式用 \ui{Output} 下拉框选择。若输出写到某个原始输入版图中，必须指定图层偏移，把原图层映射到新图层：例如偏移 \ui{1000/0} 表示 \ui{16/0} 层上 Shape 的差异会被写到 \ui{1016/0}（用于第一个容差类别）。
+
+最后，XOR 还可以限制在某个区域内，若只关心版图的局部差异就能省时间。选择区域用 \ui{From region} 旁的下拉框：
+
+\begin{kldesc}
+\item All：对整个区域做 XOR（默认）
+\item Visible region：把 XOR 限制在版图的可见部分
+\item Clipped to ruler：画一条或多条标尺来指定 XOR 的范围，每条标尺以其延伸范围给出一个区域。若用 Box 类型的标尺，区域的可视化效果更好
+\end{kldesc}
+
+\section{Diff 工具}\label{sec:diff}
+
+与 XOR 工具一样，Diff 工具也对两个版图做比较。区别在于它逐个 Cell、逐个对象地比对，并报告有差异的 Cell、Instance 与几何对象。因此这种比较更严格，也不纯粹是几何层面的：它并不在掩模层面判断两个版图是否等同，而是判断构成版图文件的对象是否完全一致。
+
+通常这类比较对“装饰性”改动（例如 Cell 改名）非常敏感。KLayout 的 Diff 工具用以下特性来缓解这一问题：
+
+\begin{itemize}
+\item 在逐 Cell 比较之前，它会先通过比较实例化方式来识别被改名的 Cell，从而即便名字不同也能比对到正确的 Cell。该功能的基础是 Cell 匹配算法：算法综合边界框、各图层 Shape 数、Instance 数等参数来比较 Cell，并为每个 Cell 选出合适的配对。
+\item 它可以部分控制比较的严格程度。例如可以在比较各 Instance 之前先把 Cell 阵列展开；默认情况下，user properties 或某些文本属性之类的二阶信息不参与比较。
+\item Diff 工具还可以工作在 XOR 模式下：把找到的差异作为后续仅针对 Polygon 的 XOR 步骤的输入，结果相当接近真正的“按打平处理”的 XOR，且是真正 XOR 结果的超集——可能把某些其实相同的位置报为不同，但不会漏报真实差异。与 XOR 工具相比，这里少了一些选项。
+\end{itemize}
+
+Diff 工具位于 \menu{Tools} 菜单中。在其对话框里：
+
+\begin{itemize}
+\item 在 \ui{Input} 区选择版图 A 与 B。
+\item 取消勾选 \ui{Don't use names to match cells} 可退回纯按名字匹配，此时被改名的 Cell 不会参与比较。
+\item 勾选 \ui{Run XOR on differences} 即选择 \ui{XOR mode}。
+\item 勾选 \ui{Summarize missing layers}，把缺失图层汇总成一条差异报告，而不是每个 Shape 一条。
+\item 勾选 \ui{Detailed information} 可获得每条差异的详细信息；不勾选时只报告有差异的 Shape 或 Instance 数目。
+\item 勾选 \ui{Expand cell arrays} 可对阵列 Instance 的各个成员分别比较。
+\item 勾选 \ui{Exact compare} 可把二阶信息（例如 user properties、文字朝向）也纳入比较。
+\end{itemize}
+
+Diff 工具会创建 marker 数据库，并在 marker 数据库浏览器中显示结果。
+
+\section{填充（tiling）工具}\label{sec:tiling}
+
+fill 工具在版图的特定区域内生成规则的填充单元（fill unit）Instance 阵列，通常称为 tiling 或 fill。它以矩形单元为基础，在 x、y 方向重复该单元来填满可用空间；多数情况下目的是填补版图的空白区域，提高版图的均匀性以改善工艺表现。
+
+使用 fill 工具之前，必须先在要被填充的版图里准备好一个填充 Cell。该 Cell 的尺寸由画在任意图层上的一个 Box 定义，这个 Box 必须代表该 Cell 的“占位”（footprint），即一个 Instance 在待填区域内所覆盖的空间。
+
+fill 工具位于 \menu{Edit} 菜单的 \menu{Utilities} 子菜单中，且仅在编辑模式下可用。使用该工具需打开对话框，然后：
+
+\begin{itemize}
+\item 选择填充区域的外边界（即“填什么”）。可选：整个 Cell、某图层上某 Polygon 的内部、所有选中 Polygon 的内部、单个 Box，或由某条标尺定义的区域。
+\item 指定填充区域是否要与边界保持某个最小距离。
+\item 指定填充区域内不得填充的区域。可选：所有图层（不在任何 Polygon 之上填充）、所有可见图层、所有选中图层，或不排除任何区域。
+\item 若填充单元必须与排除区域保持某个最小距离，在 \kte{Spacing around exclude areas} 输入框中填写该距离。
+\item 在 \ui{Fill Cell} 组中指定填充 Cell，以及定义该 Cell 占位的边界图层。
+\end{itemize}
+
+默认情况下 fill 工具在固定栅格上操作，某些场合会导致填充效率不佳。它提供 \ui{Enhanced fill} 选项，尝试寻找不一定要落在同一公共栅格上的单元排布，以获得更好的填充效果。此外还支持二阶填充：再指定一个（通常更小的）填充 Cell，用来填补剩余区域。
+
+下面的截图展示不同填充模式在一个刻意构造的填充问题上的效果。
+
+\begin{kldesc}
+\item 默认：
+\end{kldesc}
+
+\begin{kldesc}
+\item 增强：
+\end{kldesc}
+
+\begin{kldesc}
+\item 增强 + 二阶填充：
+\end{kldesc}
+
+\section{导入 Gerber PCB 文件}\label{sec:import_gerber}
+
+Gerber PCB 导入功能可以把 Gerber PCB 文件转成 GDS 版图数据，或把 Gerber 文件作为新图层加入 GDS 文件。导入器支持 artwork 文件的大部分 RS274X 特性，也支持钻带文件的几种格式。它接收一组文件并转换为版图几何，同时提供一些功能对数据做相应调整，例如定义输出图层、施加几何变换。
+
+由于选项繁多，导入配置可能变得相当复杂，因此可以以 XML 格式存成文件（建议后缀 \ui{.pcb}），其中保存导入器的各项配置。一旦有了这样的文件，KLayout 就能像读取普通 stream 文件那样读取它（例如在命令行给出），并把它当作配方来导入与之关联的 Gerber 文件。
+
+PCB 导入功能位于 \menu{File} 菜单的 \menu{Import > Gerber PCB}，提供多个入口，分别用于新建工程、打开已有工程，或接着上次的工程继续。
+
+导入 PCB 数据的基本流程是：
+
+\begin{itemize}
+\item 指定 PCB 数据文件所在的目录（base 目录）。
+\item 指定导入模式（即版图数据的去向）。
+\item 决定图层映射方式：自由图层映射，或金属叠层映射。自由映射允许 PCB 图层与 GDS 图层之间任意对应，最为灵活但填写繁琐；金属叠层映射较易填写，但只限于把一组 PCB 文件映射到 metal/via/metal 叠层方案上。
+\item 指定文件、GDS 图层，以及 PCB 到 GDS 的图层映射。
+\item 按需指定变换，可以直接给出变换，也可以用对应点来指定。
+\item 决定其它选项（例如是否合并、数据库单位、顶层 Cell 名等）。
+\end{itemize}
+
+首先要决定的是如何指定图层映射。自由模式下，需按以下步骤填写：
+
+\begin{itemize}
+\item 在 \ui{Files} 页的对话框中指定要加载的文件。
+\item 指定输出图层列表。
+\item 填写“输入到输出”的映射矩阵，为每个输入文件指定一个或多个输出图层。
+\end{itemize}
+
+在叠层模式下，填写流程为以下步骤：
+
+\begin{itemize}
+\item 指定 GDS 叠层，即可用于承载 PCB 数据的完整叠层。思路是在原有 GDS 叠层之上再叠一组 metal/via/metal 层：最靠近芯片表面的 PCB 层放进第一层金属（也就是所选叠层中符号最靠上的那层），依次往下排。
+\item GDS 图层定好之后，指定该 PCB 文件组中包含多少层金属、多少个钻孔文件，以及芯片是装在 PCB 的正面还是背面。后者决定 PCB 各层与 GDS 图层的对应顺序（第一层 GDS 层对应最靠近芯片表面的 PCB 层）。
+\item 为各金属层对应的 artwork 文件填写文件名。
+\item 为钻带文件填写文件名，并指明这些（镀通）钻孔连通哪些金属层。由于一个钻孔可以在叠层中连通多层，连接信息总是“从某金属层到某金属层”的形式，其间各金属层由该孔连通。
+\end{itemize}
+
+\subsection{导入对话框}
+
+导入对话框按导入流程分成多页。在任一页上都可以用 \menu{File} 菜单按钮把当前设置存成 PCB 导入工程、打开已有工程，或新建工程从头开始。
+
+\klfig[0.8\textwidth]{pcb_import_free_flow_1.png}{自由映射流程第一步：基本参数}
+
+第一页提供一些基本选项：
+
+\begin{itemize}
+\item Base directory：所有 PCB 文件所在目录。文件不必都在该目录中，但会以它为基准查找。若整体搬迁了文件，只需改动这个基准目录。该目录不会被存进工程文件，而是每次由用户给出。
+\item Import mode：PCB 数据可以导入当前版图（进入当前 Cell），此时通常会给当前版图新增图层；也可以新建一个版图，放进新面板或加到当前面板中。
+\item Layer mapping mode：在这里选择自由模式还是叠层模式，勾选复选框即使用自由图层映射。
+\end{itemize}
+
+\subsection{叠层流程}
+
+\klfig[0.8\textwidth]{pcb_import_stack_flow_2.png}{叠层流程第二步：叠层定义}
+
+叠层模式下，第一页需要指定一串金属层与 via 层。金属层与 via 层是自动交替的：序列总是金属层后接 via 层，层数必须是奇数，以便最后一层仍是金属层。可以用 \ui{+} 按钮增加图层，选中图层后用上下箭头按钮移动，用 \ui{X} 按钮删除所有选中图层。
+
+继续用 \ui{+} 按钮添加新图层；选中图层后可用箭头按钮上下移动；用 \ui{X} 按钮删除所有选中图层。
+
+\klfig[0.8\textwidth]{pcb_import_stack_flow_3.png}{叠层流程第三步：增删图层}
+
+下一页需要指定 artwork 文件与钻带文件的数量，之后再填入实际文件名并把它们分配给金属层或 via 层。此外还要指定芯片的安装位置：\ui{top mounting} 模式下假定芯片以正面朝下安放在 PCB 上。
+
+\klfig[0.8\textwidth]{pcb_import_stack_flow_4.png}{叠层流程第四步：文件数量与芯片安装位置}
+
+在 \ui{Artwork Files} 页填写 artwork 文件名，它们会自动分配给相应的金属层，分配顺序取决于安装模式。
+
+\klfig[0.8\textwidth]{pcb_import_stack_flow_5.png}{叠层流程第五步：钻带文件与连通层}
+
+在 \ui{Drill Files} 页填写钻带文件名。每个钻带文件描述一道钻孔工序，可能连通多层金属；因此需要在本页指定该镀通孔所连通的首末金属层，中间的 via 层随之确定。
+
+\subsection{自由图层映射流程}
+
+\klfig[0.8\textwidth]{pcb_import_free_flow_2.png}{自由映射流程第二步：文件列表}
+
+在 \ui{Files} 页指定全部 PCB 数据文件，包括 artwork 与钻带文件。顺序无所谓，但建议按物理叠层的次序排列，便于后面分配给 GDS 图层。用箭头按钮上下移动选中条目。
+
+\klfig[0.8\textwidth]{pcb_import_free_flow_3.png}{自由映射流程第三步：目标图层}
+
+在 \ui{Layers} 页指定全部目标图层，即把用作导入目标的图层列成一张表。顺序同样无所谓，但按工艺次序排列会让下一步的分配轻松一些。同样用箭头按钮调整顺序。
+
+\klfig[0.8\textwidth]{pcb_import_free_flow_4.png}{自由映射流程第四步：图层映射矩阵}
+
+在 \ui{Layer Mapping} 页把每个文件分配给一个或多个 GDS 图层。分配以矩阵形式表示：行是文件或图层，列是目标图层，矩阵中的“x”表示把该行的文件导入该列所指的图层。一个文件可以导入多个图层，效果上等于把内容复制到多个图层。
+
+\subsection{通用选项}
+
+\klfig[0.8\textwidth]{pcb_import_stack_flow_6.png}{叠层流程第六步：坐标变换}
+
+\ui{Coordinate Mapping} 页用于指定把 PCB 数据变换到 GDS 空间的方式。PCB 与 GDS 极少共用同一个原点，因此可以指定一个变换，在导入时施加到 Shape 上。
+
+有两种指定方式：
+
+\begin{itemize}
+\item 给出对应点：系统会计算一个变换，把给定的 PCB 坐标映射到给定的 GDS 坐标。最多可以给三对坐标：给一对即可推导出平移；给两对可以在平移之外解出旋转；给三对则还可解出缩放。
+\item 直接指定变换：可以在下方输入框中显式写出变换。格式为：\ui{x,y} 表示单纯平移（x、y 以微米为单位）；\ui{rx} 或 \ui{mx} 表示旋转角度 x、或沿角度 x 的直线镜像；\ui{*x} 表示缩放系数 x；各种组合还可以叠加使用。
+\end{itemize}
+
+提示：两种指定方式可以组合使用，例如给出一对坐标确定平移，再显式指定旋转。
+
+\klfig[0.8\textwidth]{pcb_import_stack_flow_7.png}{叠层流程最后一步：选项}
+
+最后，\ui{Options} 页可以设置各种选项：
+
+\begin{itemize}
+\item Layer properties file：若指定，导入完成后会载入该图层属性文件；该文件路径相对于 base 目录。
+\item Number of points per circle：KLayout 会把 PCB 版图常用的圆形孔径解析成 Polygon 以做几何运算。该选项指定用多少点来近似整圆：点越少精度越低，但数据量也越小。
+\item Merge polygons：勾选后，所有重叠或相触的 Polygon 会被合并。注意，使用 clear 层时会隐式发生合并，因为用于挖去 clear 区域的布尔运算本身会合并既有版图，这种隐式合并无法关闭。
+\item Database unit 与 top cell name：用于为新版图指定数据库单位与顶层 Cell 名；仅在导入模式会新建版图时才生效。
+\end{itemize}
+
+\section{导入其它版图文件}\label{sec:import_layout}
+
+该功能可以把其它版图合并进当前已加载的版图。所谓合并，就是把指定版图的层次插入到当前版图之中；有多种模式控制层次如何合并。该功能位于 \menu{File} 菜单的 \menu{Import > Other File Into Current}。
+
+导入另一个版图的流程如下：
+
+\begin{itemize}
+\item 指定要导入的文件，至少需要文件名。此外还可以指定一个 Cell，此时只导入该 Cell（直接或间接）引用的那些 Cell。导入可以单独指定读取选项，其作用方式与常规加载时的读取选项相同。
+\item 指定导入模式，各模式见下文。
+\item 指定图层映射：Shape 可以按原图层导入，也可以使用一个偏移量，加到原图层上得到导入后的目标图层。例如偏移 \ui{1000/0} 表示层号加 1000、datatype 保持不变。
+\item 指定可选的变换，导入的版图会据此变换。变换可以显式给出，也可以用最多三个点两两对应来指定。
+\end{itemize}
+
+有四种导入模式，控制被导入版图的层次如何插入现有版图：
+
+\begin{itemize}
+\item Merge：把被导入 Cell 的内容放入当前 Cell，其子层次加到当前 Cell 之下。
+\item Extra：创建新的顶层 Cell，其中包含被导入 Cell 的层次树。该模式下若被导入的版图有多个顶层 Cell，可以一次导入多个，此时把 Cell 指定留空即可。
+\item Instantiate：把被导入的 Cell 作为一套独立层次实例化进当前 Cell。
+\item Merge hierarchy：第四种模式稍复杂。它基本类似 \ui{Merge}，但会识别出互相对应的 Cell，并把被导入 Cell 的内容合并进对应的原有 Cell 中。算法判断“对应”的条件是：被导入子 Cell 的平坦实例与对应原有 Cell 的平坦实例完全相等（这里的平坦实例指该 Cell 在当前 Cell 语境下的实例）。实现上先逐步筛减候选列表，最后用名字相似度来消除歧义。
+\end{itemize}
+
+导入功能会用 \ui{\$x} 后缀生成新的 Cell 名，以避免重名。
+
+\section{net 追踪功能}\label{sec:net_tracing}
+
+net tracing（网络追踪）功能通过检测相互接触、共同构成导电区域的 Shape 来追踪一条 net，其特性是可以指定一叠金属（或一般的“导电”）图层，各层之间可选地通过 via 图形相连。追踪算法会沿着 via 图形跨层，形成到其它金属层的连接。导电材料的覆盖范围可以由单个版图图层派生，也可以由若干图层的布尔组合派生，例如把有源区减去 poly 区域，就能选出晶体管的源、漏区。
+
+\subsection{单网络追踪（Single net tracing）}
+
+该算法面向单条 net 的提取，采用增量式提取方式。因此提取一条小的 net 相对较快，而提取电源网之类的大 net 则明显比目前的层次化 LVS 工具慢得多。
+
+net tracing 功能位于 \menu{Tools} 菜单中。界面允许追踪多条 net，结果保存在一个已提取 net 的列表中。若 net 上有 label，会用其推导 net 名；此外还会列出提取过程中经过的 Cell，从而可以看出这条 net 连接了哪些 Cell。
+
+提取 net 之前必须先指定一叠图层（layer stack）。在界面上按 \ui{Layer Stack} 按钮打开 layer stack 对话框，或使用 \menu{Tools} 菜单中的 \ui{Edit Layer Stack}。图层必须以 \ui{layer/datatype} 记法指定，via 的指定是可选的：若不指定 via 图层，则要求两个金属层的 Shape 直接接触才算连接；若指定了 via 图层，则必须有 via 图形才构成连接。
+
+layer stack（也称 connectivity）同样是 technology 的组成部分：给版图选定某个 technology 后，就采用该 technology 专属的叠层。要编辑所有 technology 的叠层，请用 Technology Manager（\menu{Tools > Manage Technologies}）中各 technology 的 \ui{Connectivity} 部分。
+
+一个 connectivity 定义可以包含多套叠层，使用时须选定其一。当你的工艺配置中存在多套布线金属方案时，这很有用，不必为每套方案分别建立 technology。若声明了多套叠层，可以在 \ui{Trace Net} 对话框中 \ui{Layer Stack} 右侧的下拉按钮，以及左下角 \ui{Configuration} 按钮处选择其一。
+
+在叠层定义中，KLayout 允许使用 symbolic layer 与布尔表达式，从而可以给图层赋予有意义的名字（如 \ui{POLY}、\ui{VIA1}），也可以使用派生图层（如用 \ui{ACTIVE-POLY} 表示 CMOS 晶体管的源漏区）。相关说明见第 原文对应章节 节与第 原文对应章节 节。
+
+定义并选定 layer stack 之后，按 \ui{Trace Net} 按钮并在版图中单击一点，即可追踪该处的 net：算法从该点下的 Shape 出发提取整条 net，并把结果列入对话框左侧的 net 列表。若勾选了 \ui{Lock}，则不必再按 \ui{Trace Net} 按钮，直接单击另一点即可继续追踪另一条 net。
+
+有时会遇到很大的 net（例如电源网），单击之后追踪器会开始运行，提取耗时很长。若并不关心这类 net 的细节，可以限制追踪深度：遇到指定数目的 Shape 后追踪器即停止，并把已收集的 Shape 作为一条不完整的 net 报告出来。
+
+要配置该深度，在追踪对话框底部的 \ui{Trace depth} 框中填入期望的 Shape 数。注意：由于内部还会用到一些标记 Shape（它们计入数量但不作为 net 的一部分输出），net 中实际的 Shape 数可能略少于所设深度。
+
+\ui{Trace Path} 功能类似，但要求指定两个点，让算法找出两点之间的最短连接（按 Shape 数量而非几何长度衡量）。若两点并不连通，会给出提示说明从一点到另一点没有通路。
+
+net 的显示方式可以多方配置：在 trace net 对话框中按 \ui{Configure} 打开配置对话框，除用于显示 net 的标记颜色与样式外，还可以指定窗口是否以及如何调整以适合该 net。
+
+\subsection{追踪全部网络（Tracing all nets）}
+
+该算法借自 LVS 功能，那里还在此基础上扩展出器件识别与网表生成。在 net tracer 的语境下，net 仅由相连的 Shape 组成，不挂接器件。由于 LVS 一次扫描就提取全部 net，这里使用该功能也能一次得到所有 net。虽然信息更丰富，但追踪全部 net 通常比追踪一条大 net（如电源网）更快。LVS 的 net 提取器还支持层次化处理，性能提升显著，net 的表示也更紧凑。
+
+要提取全部 net，使用 \menu{Tools} 菜单中的 \ui{Trace All Nets}，它会立即开始提取，并沿用单网络追踪器中的 connectivity 定义。你可以从单网络追踪器界面、Technology Manager，或 \menu{Tools} 菜单中的 \ui{Edit Layer Stack} 修改这套 layer stack。
+
+追踪完成后会打开网表浏览器（netlist browser）对话框。在其中可以：
+
+\begin{itemize}
+\item 在中央视图左半边浏览电路层次（取自 Cell 层次）。
+\item 在视图右半边浏览各电路的 net，单击某条 net 即高亮该 net。
+\item 用 \ui{Configure} 按钮配置 net 的高亮方式。
+\item 用右上角的 \menu{File} 菜单按钮，把全部或选中的 net 导出到版图、把网表（含 Shape）存成文件、从文件载回，以及管理网表数据库。
+\item 用搜索框查找 net 名（若有 label）与电路。
+\item 用左上角的 \ui{back} 与 \ui{forward} 按钮在浏览历史中前进、后退。
+\end{itemize}
+
+提取出的 net 以 KLayout 专用格式 \ui{L2N}（layout to netlist）读写，其中既含 net 也含构成 net 的 Shape，因此追踪结果可以存盘并日后取回。

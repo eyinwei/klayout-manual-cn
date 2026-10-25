@@ -1,0 +1,672 @@
+% Design Rule Check (DRC) —— 由 work/build.py 自动生成，勿手改；改译文请改 work/translations/
+\chapter{Design Rule Check (DRC)}\label{ch:drc}
+
+\section{DRC 基础}\label{sec:drc_basic}
+
+KLayout 从 0.23 版起支持 design rule check（DRC，设计规则检查）。DRC 功能涵盖：
+
+\begin{itemize}
+\item 基本 DRC 检查，例如最小宽度与最小间距检查。
+\item 图层生成方法，例如布尔运算与 sizing。
+\item 扩展的几何检查，例如重叠、包围、内部与外部检查。
+\item 支持由 Polygon 派生或由其它函数输出的 Edge 对象。Edge 对象适合实现与边相关的运算，例如选择性 sizing。
+\item 可同时处理多个输入版图。
+\item 支持 Text 对象图层。用 Text 对象给 Polygon 打标记、给 net 加 label 都很方便。
+\item Cell 过滤与局部（限定区域的）运算。
+\item 面向大型版图的 tiling 方式，可配置为使用多核 CPU。
+\item 层次化选项。
+\end{itemize}
+
+DRC 功能由 DRC 脚本控制。DRC 脚本本质上是运行在 DRC 引擎环境中的一段代码，语言基于 KLayout 内置的 Ruby 解释器，并把底层对象模型包装成一套精炼而富于表达力的语言。脚本是即时执行的，因此可以在其间嵌入条件判断或循环。
+
+DRC 脚本的输出可以送往某个版图图层，或送往 report database；后者在 marker 数据库浏览器中可视化。
+
+\subsection{基本脚本}
+
+runset 的写法在第 \ref{sec:drc_runsets} 节详细介绍。下面是一个简单的 DRC 脚本示例：
+
+\begin{lstlisting}
+report("A simple script") active = input(1, 0) poly = input(6, 0) gate = active & poly gate.width(0.3).output("gate_width", "Gate width violations") metal1 = input(17, 0) metal1.width(0.7).output("m1_width", "M1 width violations") metal1.space(0.4).output("m1_space", "M1 spacing violations")
+\end{lstlisting}
+
+这段脚本先用布尔“AND”从 active 与 poly 两层求出栅极 poly 的区域（active 层为 GDS 第 1 层，poly 层为 GDS 第 6 层），再在这个求得的 gate 层上做 0.3 微米的最小宽度检查；此外还对第一层金属（GDS 第 17 层）做宽度与间距检查。
+
+下面逐行拆解：
+
+\begin{itemize}
+\item 报告目标。\ui{report("A simple script")} 指示脚本把输出送往 report database，后者在 marker 数据库浏览器中显示。括号内是 report database 的描述文字。
+\item 输入图层。\ui{active = input(1, 0)} 创建一个输入图层。所谓“图层”在 DRC 中就是 Shape、Edge 或 Edge pair 的集合（Edge pair 是检查方法产生的一类对象）。\ui{input} 是返回图层对象的函数，各种检查与运算都以面向对象的方式作用于这些图层对象，背后是 Ruby 解释器。变量 \ui{active} 即表示该图层。
+\item \ui{poly = input(6, 0)} 再创建一个输入图层，表示多晶硅（GDS 第 6 层、datatype 0）。
+\item 布尔与运算。\ui{gate = active \& poly} 求 active 与 poly 的布尔“AND”，运算符 \ui{\&} 即交集运算。结果作为一个新图层对象存入变量 \ui{gate}；这是临时图层，不会出现在输出中，但可供后续语句使用。
+\item 宽度检查并输出。\ui{gate.width(0.3).output(...)} 把两步合成一句：先在 gate 层上以 0.3 微米为最小宽度做宽度检查，再把违规标记输出到指定的报告类别。方法是作用于具体对象的函数，DRC 脚本用 \ui{.} 记法调用。
+\item \ui{metal1 = input(17, 0)} 和前文一样，从 GDS 第 17 层、datatype 0 取输入并创建图层对象。
+\item \ui{metal1.width(0.7).output("m1\_width", ...)} 与 gate 类似，做宽度检查（这次是 0.7 微米），并把违规标记输出到 report database 的某个类别。
+\item \ui{metal1.space(0.4).output("m1\_space", ...)} 再做一次几何检查：这次是最小间距 0.4 微米的 spacing 检查。
+\end{itemize}
+
+脚本也可以写成若干等价形式。例如下面是极简版的栅极宽度检查：
+
+\begin{lstlisting}
+(input(1, 0)*input(6, 0)).width(0.3).output("gate_width", "Gate width violations")
+\end{lstlisting}
+
+布尔运算还提供了一些别名，若偏好面向对象写法，可以用 \ui{and} 方法：
+
+\begin{lstlisting}
+input(1, 0).and(input(6, 0)).width(0.3).output("gate_width", "Gate width violations")
+\end{lstlisting}
+
+也可以用函数式写法：
+
+\begin{lstlisting}
+and(input(1, 0), input(6, 0)).width(0.3).output("gate_width", "Gate width violations")
+\end{lstlisting}
+
+尺寸可以用不同方式给出：
+
+\begin{lstlisting}
+# floating-point (will default to micrometer) gate.width(0.3).output("gate_width", "Gate width violations") # floating-point with unit gate.width(0.3.micron).output("gate_width", "Gate width violations") gate.width(300.nm).output("gate_width", "Gate width violations") # integer values will give dimensions in database units! gate.width(300).output("gate_width", "Gate width violations") # as variable min_width = 300.nm gate.width(min_width).output("gate_width", "Gate width violations")
+\end{lstlisting}
+
+\subsection{安装与运行脚本}
+
+要创建 DRC 脚本，选择 \menu{Tools > DRC > New DRC Script}。KLayout 会打开 Macro 开发 IDE 并新建脚本；第一件事是给它起个合适的名字——光标已停在名字上，直接输入新名字并回车即可。
+
+下一步给 DRC 脚本写点描述：按宏编辑器工具栏上的 \ui{Properties} 按钮，输入描述文字，这段文字会出现在菜单项中。
+
+此后该 DRC 脚本就会带着描述出现在 \menu{Tools > DRC} 下，选中该条目即运行脚本。
+
+要编辑 DRC 脚本，从 \menu{Tools > DRC} 选 \ui{Edit DRC Scripts}，或进入宏编辑器 IDE 后选择 DRC 类别（宏列表上方的标签）。
+
+DRC 脚本可以像普通宏一样共享或全局安装。可以放进 \ui{macros} 目录，但更推荐部署在 \ui{macros} 同级、名为 \ui{drc} 的目录中。KLayout 会在多处搜索 DRC 脚本或宏，包括安装路径与应用目录（通常在用户主目录）。这两处都可以用来存放 DRC 脚本。
+
+对进阶用户而言，DRC 脚本其实就是绑定到 DRC 解释器（而非普通 Ruby 解释器）上的宏，可以像普通宏一样创建与运行：用 \menu{Macros > Macro Development} 进入宏 IDE，用“add macro”功能（\ui{+} 按钮）新建 DRC 脚本，并在选择模板时（\ui{General} 部分）选 \ui{DRC scripts}。
+
+宏开发设施的更多说明见第 原文对应章节 节。
+
+默认情况下 DRC 脚本放在宏 IDE 的 DRC 类别中。宏类别只是组织宏的手段，并不决定运行行为；因此除 DRC 类别所选的 \ui{drc} 目录外，DRC 脚本也可以放在别处。
+
+DRC 脚本可以像普通宏那样在调试器中执行，用断点或单步来调试。底层的 DRC 命令会映射到 Ruby 函数，因此单步进入这些命令就能看到其背后的实现代码。
+
+DRC 脚本以 KLayout 宏格式存为 \ui{.lydrc} 文件，这是 XML 文件，脚本代码放在其中。KLayout 也识别后缀为 \ui{.drc} 的纯文本文件，但这类文件通常缺少必要的元信息，无法绑定到菜单项，因此只能从宏 IDE 中运行。
+
+\subsection{DRC 豁免流程（DRC waiving）}
+
+DRC 豁免是对无法避免的违规做签字放行的过程。通常并不鼓励这种做法，因为存在 DRC 违规就无法保证器件的可制造性；更糟的是，把不干净的版图送去制造可能带来污染风险，而制造商往往会尽力避免这一点，因此不满足 DRC 的版图通常会被拒收。
+
+不过仍有若干正当理由可以豁免：有时某些 DRC 规则因为器件不使用某项工艺选项而不适用；又或者某条规则只是推荐性的，违反它并不违规。这种情况下，可以自担风险豁免该违规。豁免并非正式流程，通常由制造商自行酌情处理。
+
+KLayout 的 DRC 豁免流程如下：
+
+\begin{itemize}
+\item 第一步，DRC 运行通过 \ui{report} 命令并指定目标文件，生成一个 RDB 数据库。
+\item 在 marker 浏览器中审查这份报告，可以添加注释、设置标志、添加截图；也正是此时把你认为确需豁免的违规设为豁免状态：marker 浏览器有 \ui{waive} 按钮，可对选中 marker 设置或取消 waived 标志。
+\item 完成后，用 marker 浏览器 \menu{File} 菜单中的 \ui{Save As Waiver DB} 把编辑过的数据库另存为 waiver DB。技术上它把 report database 写到第二个文件，文件名为原文件名加后缀 \ui{.w}。
+\item 再次运行 DRC 时，KLayout 会找到该 waiver DB 文件，并把其中的属性（标志、图像、注释等）应用到当前的 report database 上，其中就包括给对应条目打上 waived 标志。
+\end{itemize}
+
+在豁免环节，KLayout 把属性应用到“值（即 Shape）、类别与 Cell”都相同的条目上。这意味着一旦 Cell 改名，豁免就不再生效，或最坏情况下被套到错误的 Cell 上。因此豁免应放在流程后期、Cell 名不太可能再改动时进行。
+
+\subsection{把 KLayout 当作独立的 DRC 引擎}
+
+配合一种特殊的 DRC 脚本，KLayout 可以作为非交互的 DRC 引擎使用。由于独立引擎模式下没有“当前版图”，这类脚本必须用 \ui{source} 函数显式指定输入；输出同样要显式指定，或用 \ui{target} 生成输出版图，或用 \ui{report} 生成输出 report database（详见上文）。
+
+下面是个例子：从 \ui{input.gds} 读取第 1 层、datatype 0，做 200 纳米的 sizing，并把结果写入 \ui{out.gds} 的第 10 层、datatype 0：
+
+\begin{lstlisting}
+source("input.gds") target("out.gds") input(1, 0).sized(200.nm).output(10, 0)
+\end{lstlisting}
+
+再看一例，把结果存到 report database 文件 \ui{out.lyrdb} 的 \ui{sized} 类别中：
+
+\begin{lstlisting}
+source("input.gds") report("Output Database", "out.lyrdb") input(1, 0).sized(200.nm).output("sized")
+\end{lstlisting}
+
+要运行这类脚本，把脚本存成 \ui{.drc} 后缀的文件，然后如下运行（把 \ui{my.drc} 换成你的文件名）。建议关闭一些此处用不到的功能，并用 \ui{-b} 让 KLayout 进入非交互批处理模式：
+
+\begin{lstlisting}
+klayout -b -r my.drc
+\end{lstlisting}
+
+\ui{-b} 会禁用全部界面功能，让 KLayout 进入引擎模式，在 Unix 上不需要显示连接；同时不再从各搜索位置隐式加载宏（仍可用 \ui{-rm} 显式加载），也不再读写配置文件，从而减少 I/O 并避免多个 KLayout 实例之间的写冲突。
+
+\section{DRC runset 编写}\label{sec:drc_runsets}
+
+本文详细介绍如何编写 DRC runset。DRC 函数的完整参考见第 原文对应章节 节。
+
+\subsection{runset 基础}
+
+runset 本质上是一段运行在 DRC runset 解释器环境中的 Ruby 脚本。在这一层面上，runset 只用很少的几个类，另有若干全局函数：
+
+\begin{itemize}
+\item Layers（\ui{DRC::DRCLayer} 类）：图层或取自原版图输入，或由生成信息的函数创建；可用于各项检查和派生运算。
+\item Sources（\ui{DRC::DRCSource} 类）：source 表示“从哪个版图对象取输入”。总存在一个默认 source，即默认版图。
+\end{itemize}
+
+还有一些全局函数，不需要任何对象即可调用。
+
+runset 的基本要素是输入与输出规格：输入通过 \ui{input} 方法给出，它会创建一个图层对象。
+
+总体而言，runset 语言提供了丰富的同义写法——同一个结果常有多条路径可达。
+
+脚本以即时模式执行：每个函数立即生效，结果可以立即用于条件判断或循环。
+
+由于 runset 是运行在 KLayout 脚本引擎中的 Ruby 脚本，可以直接使用 KLayout 完整的数据库访问层。
+
+\subsection{包含其它文件}
+
+DRC 脚本语言基于 Ruby，因而具备许多原生特性。原则上脚本里可以用 \ui{load} 引入另一份脚本，但 Ruby 的这个机制有其局限。
+
+可惜 \ui{load} 会为变量创建局部上下文，因此不能用 \ui{load} 读入一个“定义若干变量”的文件来共享变量。
+
+为解决这个问题，KLayout 提供了一个专用扩展：通过预处理把另一份文件嵌入当前源码，效果上等同把被包含文件的内容原样插入。
+
+记法如下：
+
+\begin{lstlisting}
+# %include to_include.drc
+\end{lstlisting}
+
+这会包含 \ui{include.drc}。若未给绝对路径，则相对当前文件所在目录查找。
+
+文件名也可以加引号，并支持表达式插值（语法见第 原文对应章节 节），因此可以读取环境变量来定位文件。
+
+\begin{lstlisting}
+# %include $(env("HOME"))/to_include.drc
+\end{lstlisting}
+
+由于 Ruby 看不到原始文件，某些内部机制（例如内省）报告的会是错误的文件名与行号；多数情况下这无关紧要。
+
+\subsection{输入与输出}
+
+输入通过 \ui{input} 方法或全局函数给出。\ui{input} 本质上是 source 对象的方法，而总有一个默认 source，即当前版图。
+
+\ui{input} 会创建一个图层对象，代表指定输入图层上的 Shape。指定图层有多种方式。
+
+\begin{lstlisting}
+# GDS layer 17, datatype 0 l = input(17) # GDS layer 17, datatype 10 l = input(17, 10) # By expression (here: GDS layers 1-10, datatype 0 plus layer 21, datatype 10) # All shapes are combined into one layer l = input("1-10/0", "21/10")
+\end{lstlisting}
+
+输入也可以取自默认版图之外的其它版图，做法是用全局函数 \ui{layout} 创建 source 对象：
+
+\begin{lstlisting}
+# layer 17 from second layout loaded l = layout("@2").input(17) # layer 100, datatype 1 and 2 from "other_layout.gds" other_layout = layout("other_layout.gds") l1 = other_layout.input(100, 1) l2 = other_layout.input(100, 2)
+\end{lstlisting}
+
+输出默认送往默认版图，即当前视图中最先加载的那个。输出规格包括图层与 datatype。
+
+\begin{lstlisting}
+# send output to the default layout: layer 17, datatype 0 l.output(17, 0) # send output to the default layout: layer named "OUT" l.output("OUT") # send output to the default layout: layer 17, datatype 0, named "OUT" l.output(17, 0, "OUT")
+\end{lstlisting}
+
+输出可以用 \ui{target} 函数送往其它版图：
+
+\begin{lstlisting}
+# send output to the second layout loaded: target("@2") # send output to "out.gds", cell "OUT_TOP" target("out.gds", "OUT_TOP")
+\end{lstlisting}
+
+输出也可以用 \ui{report} 函数送往 report database：
+
+\begin{lstlisting}
+# send output to a report database with description "Output database" # - after the runset has finished this database will be shown report("Output database") # send output to a report database saved to "drc.lyrdb" report("Output database", "drc.lyrdb")
+\end{lstlisting}
+
+把输出送往 report database 时，规格中必须给出正式名称，描述则是可选的。\ui{output} 方法会创建……
+
+\begin{lstlisting}
+# specify report database for output report("The output database") ... # Send data from layer l to new category "check1" l.output("check1", "The first check")
+\end{lstlisting}
+
+\ui{report} 与 \ui{target} 规格必须写在实际的 output 语句之前；可以给出多个 report 与 target 规格，把输出分流到多处。
+
+用 \ui{output} 写出的图层可以再作为输入使用，但要注意 input 语句应放在 output 语句之后。
+
+也可以再打开若干“旁路”report 与 target，把图层送往这些输出，同时不打断默认输出。
+
+要打开“旁路 report”，像使用 \ui{report} 那样使用 \ui{new\_report}：它不会切换输出，而是返回一个新的 report 对象。
+
+\begin{lstlisting}
+# opens a new side report side_report = new_report("Another report") ... # Send data from layer l to new category "check1" to the side report l.output(side_report, "check1", "The first check")
+\end{lstlisting}
+
+同理，可用 \ui{new\_target} 打开“旁路 target”，把某些图层写到其它版图文件，这在需要输出多份数据时很方便。
+
+\begin{lstlisting}
+# opens a new side target for debugging debug_out = new_target("debug.gds") ... # Send data from layer l to the debug output, layer 100/0 l.output(debug_out, 100, 0)
+\end{lstlisting}
+
+\subsection{尺寸规格}
+
+尺寸规格在很多地方用到：坐标、间距与宽度、长度等。所有地方都遵循以下规则：
+
+\begin{itemize}
+\item 浮点数默认按微米解释。
+\item 整数默认按数据库单位解释（注意：不是整数微米！）。
+\item 为明确起见，可以给数值加上单位。
+\end{itemize}
+
+单位通过单位方法追加：
+
+\begin{kldesc}
+\item \ui{0.1}：0.1 微米
+\item \ui{200}：200 个数据库单位
+\item \ui{200.dbu}：200 个数据库单位
+\item \ui{200.nm}：200 纳米
+\item \ui{2.um} 或 \ui{2.micron}：2 微米
+\item \ui{0.2.mm}：0.2 毫米
+\item \ui{1e-5.m}：1e-5 米（即 10 微米）
+\end{kldesc}
+
+面积的单位通常是平方微米。同样可以加单位，以明确采用某种面积单位。
+
+\begin{kldesc}
+\item \ui{0.1.um2} 或 \ui{0.1.micron2}：0.1 平方微米
+\item \ui{0.1.mm2}：0.1 平方毫米
+\end{kldesc}
+
+角度一律以度为单位；加上 degree 单位可以更明确地表示你要用度。
+
+\begin{kldesc}
+\item \ui{45.degree}：45 度
+\end{kldesc}
+
+\subsection{对象与方法}
+
+runset 是用面向对象语言写成的脚本，完全可以不按对象方式书写。
+
+在 KLayout 的 DRC 语言中，图层是一个带有若干方法的对象，布尔运算即通过这些方法实现。
+
+\begin{lstlisting}
+input(1, 0).sized(0.1).output(100, 0)
+\end{lstlisting}
+
+与其它方法一样，\ui{size} 有两种形式：原地（in-place）版本与异地（out-of-place）版本。
+
+下面是上面那段代码用原地版本写成的样子：
+
+\begin{lstlisting}
+layer = input(1, 0) layer.size(0.1) layout.output(100, 0)
+\end{lstlisting}
+
+原地版本在内存上略微经济，因为异地版本每步运算都要新建一个图层对象、保留一份中间结果。
+
+\begin{lstlisting}
+layer = input(1, 0) layer2 = layer layer.size(0.0) layer.output(100, 0) layer2.output(101, 0)
+\end{lstlisting}
+
+这段代码会给 100 层与 101 层产生相同的 sizing 结果，因为 \ui{layer2 = layer1} 只是共享同一个对象。
+
+该问题可以通过使用异地版本，或用 \ui{dup} 创建深拷贝来解决。
+
+\begin{lstlisting}
+# out-of-place size: layer = input(1, 0) layer2 = layer layer = layer.sized(0.0) layer.output(100, 0) layer2.output(101, 0) # deep copy before size: layer = input(1, 0) layer2 = layer.dup layer.size(0.0) layer.output(100, 0) layer2.output(101, 0)
+\end{lstlisting}
+
+有些方法还提供包括函数式调用在内的不同写法，例如 width 检查既可以写成 \ui{layer.width(0.3)}，也可以写成 \ui{width(layer, 0.3)}。
+
+\begin{lstlisting}
+# method style: layer.width(0.2).output("width violations") # function style: w = width(layer, 0.2) output(w, "width violations")
+\end{lstlisting}
+
+函数式写法是为不熟悉面向对象风格、更习惯函数调用的用户准备的。
+
+下面简要列出部分可用方法：
+
+\begin{kldesc}
+\item 源、输入与输出：\ui{source}、\ui{layout}、\ui{cell}、\ui{select}、\ui{clip}、\ui{input}、\ui{labels}、\ui{polygons}、\ui{output}、\ui{report}、\ui{target}
+\item DRC 函数：\ui{width}、\ui{space}、\ui{separation}（\ui{sep}）、\ui{notch}、\ui{isolated}（\ui{iso}）、\ui{enclosing}（\ui{enc}）、\ui{enclosed}、\ui{overlap}
+\item 通用 DRC（见下文）：\ui{drc}
+\item 布尔运算：\ui{and}（与）、\ui{or}（或）、\ui{not}（非）、\ui{xor}（异或）、\ui{join}（并）
+\item sizing：\ui{size}、\ui{sized}
+\item 合并：\ui{merge}、\ui{merged}
+\item 图形选择：\ui{covering}、\ui{in}、\ui{inside}、\ui{interacting}、\ui{outside}、\ui{overlapping}、\ui{pull\_inside}、\ui{pull\_interacting}
+\item 过滤器：\kte{rectangles}、\kte{rectilinear}、\kte{with\_area}、\kte{with\_bbox\_height}、\kte{with\_bbox\_width}、\kte{with\_bbox\_max}、\kte{with\_bbox\_min} 等
+\item 文字过滤：\ui{texts}、\ui{texts\_not}
+\item 变换：\ui{moved}、\ui{rotated}、\ui{scaled}、\ui{transformed}；这些方法同样有原地版本
+\item Polygon 处理：\ui{extents}、\ui{hulls}、\ui{holes}
+\item Edge 处理：\ui{centers}、\ui{end\_segments}、\ui{start\_segments}、\ui{extended}、\ui{extended\_in}、\ui{extended\_out}
+\item 信息查询：\ui{length}、\ui{perimeter}、\ui{area}、\ui{polygons?}、\ui{edges?}、\ui{edge\_pairs?}、\ui{is\_box?}、\ui{is\_clean?}、\ui{is\_empty?}、\ui{is\_merged}
+\item 图层模式：\ui{raw}、\ui{clean}
+\item 图层类型转换：\ui{edges}、\ui{first\_edges}、\ui{second\_edges}、\ui{polygons}
+\end{kldesc}
+
+\subsection{Polygon 层与 edge 层}
+
+KLayout 认识四种图层类型：polygon、edge、edge pair 与 text 层。其中 polygon 与 edge 层是最基础的两类，其余两类都由它们派生。
+
+polygon 层由原始图层经 \ui{input} 或 \ui{polygons} 创建；\ui{input} 还会把很小的文字当作极小的图形读入，而 \ui{polygons} 只取图形。
+
+polygon 层描述有面积的物体（绘图视图中的“填充图形”），可以是 Polygon，也可以是 Box 或 Path 这类有面积的图形，运算时统一按 Polygon 处理。
+
+polygon 分 raw 与 merged 两种：merged polygon 由一条外壳轮廓加零到多条内部孔洞轮廓组成。
+
+edge 层可由 polygon 层派生，用来描述一个 Polygon 的各个单独的边（“侧边”）。
+
+edge 可以按长度与角度过滤；\ui{extended} 可在边上立起 Polygon（通常是矩形）。
+
+edge 不区分其来自 Polygon 的孔洞还是外壳；edge 的方向则是沿轮廓行进方向确定的，因此判断“里外”时需留意边界的绕行方向。
+
+merged edge 是合并后的结果：共线的边合并成一条，退化的边（单点）被去掉。
+
+用 \ui{edges} 方法可以把 Polygon 分解成 edge；另一种生成 edge 的方式是从……取边。
+
+\subsection{文字集合}
+
+从 0.27 版起，KLayout 支持 text 层。Text 本质上就是带字符串的位置。
+
+Text 可以用来选取 Polygon，或在 net 提取中充当 net 名。
+
+文字集合保存在 text 层中，用 \ui{labels} 方法（而非 \ui{input}）创建。
+
+text 层支持以下运算：
+
+\begin{itemize}
+\item 与 polygon 层做布尔 AND：选出位于某个 Polygon 之内或边界上的文字；\ui{interact} 则选出与 Polygon 接触或重叠的文字。
+\item 与 polygon 层做布尔 NOT：选出不在任何 Polygon 之内的文字，\ui{not\_interact} 用于选出不与任何 Polygon 接触的文字。
+\item 作为 \ui{interact} 的第二个图层：这样可以选出被特定文字标记的 Polygon。
+\item 按字符串过滤：可以按固定文字或 glob 通配符过滤文字内容。
+\item \ui{flatten} 会打平 text 层的层次结构。
+\item 围绕文字所在位置生成 Polygon 或 edge：\ui{polygons} 与 \ui{edges}
+\end{itemize}
+
+\subsection{edge pair 与 edge pair 集合}
+
+edge pair 是由两条边组成的对象。描述 DRC 违规时它很方便，因为违规常见的形态就是“两条边相距过近”或“两条边之间的间距不足”。
+
+edge pair 集合的行为类似普通图层，但为其定义的方法很少。edge pair 可以被分解为组成它的两条边，或直接转成 Polygon 标记。
+
+用 \ui{polygons} 可把 edge pair 转成 Polygon。edge pair 的面积可能为零（例如两条边共线时）。
+
+\subsection{raw 与 clean 图层模式}
+
+KLayout 的 DRC 引擎有两种解释图层几何信息的基本方式：clean 模式下，参与运算的 Polygon 会先被合并，重叠部分只保留一份；
+
+clean 是默认模式：无论从输入取得还是新生成的图层都按 clean 模式处理。要切换到 raw 模式，用 \ui{raw} 方法。
+
+在 clean 模式下，多数函数会隐式合并 Polygon 与 edge，文档中称为“implicit merge”。
+
+一个应用例子：在 sizing 之后检测重叠区域：
+
+\begin{lstlisting}
+overlaps = layer.size(0.2).raw.merged(2)
+\end{lstlisting}
+
+该语句的效果如下：
+
+\klfig[0.8\textwidth]{drc_raw1.png}{}
+
+\ui{merged} 参数为 2 时，输出的是被三个及以上 Polygon 重叠的区域。
+
+请注意，\ui{raw} 与 \ui{clean} 会改动图层状态，所以要当心下面的陷阱：
+
+\begin{lstlisting}
+layer = input(1, 0) layer.raw.sized(0.1).output(100, 0) # this check will now be done on a raw layer, since the # previous raw call was putting the layer into raw mode layer.width(0.2).ouput(101, 0)
+\end{lstlisting}
+
+下面两张图展示 raw 与 clean 模式的效果：
+
+\subsection{屏蔽}
+
+“屏蔽”（shielding）是指 DRC 测量不会“穿透”版图特征去看。启用屏蔽后，DRC 测量间距时会把中间的遮挡图形考虑在内，只统计未被遮挡的视线。
+
+下面的例子演示屏蔽的效果：右侧例子关闭了屏蔽，因此两条边即便中间隔着别的图形，仍会按直线距离判定间距。
+
+屏蔽虽然更自然，却可能带来不利影响：它在零距离处就已生效，因此紧贴在一起的图形会被判为不存在间距，从而产生与直觉不符的结果。
+
+\subsection{通用 DRC}
+
+从 0.27 版起，DRC 语言新增了“通用 DRC”（universal DRC）功能。
+
+一方面，它让 DRC 检查的书写更方便，因为可以用自然的表达式来描述；
+
+\begin{lstlisting}
+... drc_w = input(1, 0).width(0.2) ...
+\end{lstlisting}
+
+可以写成：
+
+\begin{lstlisting}
+... drc_w = input(1, 0).drc(width < 0.2) ...
+\end{lstlisting}
+
+\ui{drc} 方法即“通用 DRC”方法，它接受一个运算符。简单情形下运算符就是普通的比较。
+
+\begin{kldesc}
+\item \ui{drc( measurement != value )}：在尺寸不等于给定值处生成标记
+\item \ui{drc( measurement == value )}：在尺寸等于给定值处生成标记
+\item \ui{drc( measurement less\_op value )}（\ui{less\_op} 为 < 或 <=）：在尺寸小于或等于给定值处生成标记
+\item \ui{drc( measurement greater\_op value )}（\ui{greater\_op} 为 > 或 >=）：在尺寸大于或等于给定值处生成标记
+\item \ui{drc( lower\_value less\_op measurement greater\_op upper\_value )}：在尺寸落在上下界之间处生成标记
+\end{kldesc}
+
+\ui{measurement} 可以是 \ui{width}、\ui{notch}、\ui{isolated}（\ui{iso}）、\ui{separation}（\ui{sep}）、\ui{overlap}、\ui{enclosed} 或 \ui{enclosing}……
+
+\begin{lstlisting}
+... l1 = input(1, 0) l2 = input(2, 0) drc_sep = l1.drc(separation(l2) <= 0.5) ...
+\end{lstlisting}
+
+选项同样与 measurement 一起给出，记法与普通方法一致。
+
+\begin{lstlisting}
+... drc_w = input(1, 0).drc(width(projection) < 0.2) ...
+\end{lstlisting}
+
+但通用 DRC 远不止是书写检查的便捷方式：它提供了一系列选项，允许在单个测量内部对图形做局部运算与过滤。
+
+例如布尔 \ui{and} 运算符会在这一循环内部做“局部”的 AND，从而可以高效地表达“同时满足 space 与 width 条件”的复杂检查。
+
+\begin{lstlisting}
+... drc_ws = input(1, 0).drc((width < 0.2) & (space < 0.3)) ...
+\end{lstlisting}
+
+该 AND 在主图形的边上计算，返回同时满足 space 与 width 条件的那些边段，而不必把整层图形先合并再判断。
+
+\begin{lstlisting}
+... drc_ws1 = input(1, 0).width(0.2).edges drc_ws2 = input(1, 0).space(0.3).edges drc_ws = drc_ws1 & drc_ws2 ...
+\end{lstlisting}
+
+原因是：局部循环中的布尔运算在某个输入为空时可以短路跳过。
+
+总体而言，通用 DRC 功能丰富，支持基于 Polygon 或边属性的过滤，也支持多条件组合，适合表达较复杂的规则。
+
+\subsection{日志与输出详细程度}
+
+runset 执行过程中会写一份日志，列出所调用的方法及其执行时间；日志便于定位耗时最长的步骤。
+
+日志显示在日志窗口中；若日志窗口未打开，在类 Linux 系统上则输出到终端。
+
+\ui{log} 函数适合在处理过程中打印结果计数：
+
+\begin{lstlisting}
+... drc_w = input(1, 0).width(0.2) log("Number of width violations: #{drc_w.data.size}") ...
+\end{lstlisting}
+
+\ui{error} 函数可以无条件输出错误消息，并按错误格式呈现；日志中可以据此快速找出脚本自身的问题。
+
+\begin{lstlisting}
+log_file("drc_log.txt") verbose(true) info("This message will be sent to the log file") ...
+\end{lstlisting}
+
+\ui{profile} 函数会在 DRC 运行期间收集性能剖析信息，脚本结束时把各函数的累计耗时打印出来。
+
+\begin{lstlisting}
+# enables profiling profile ...
+\end{lstlisting}
+
+\subsection{tiling 选项}
+
+tiling 是降低某次运算内存需求的方法。对大型版图，把整层拉进来会占用大量内存，拆成小块逐块处理则可以把峰值压下来。
+
+tiling 并非没有代价：有些运算的影响范围可能是无限的，例如选取边之后沿着边一直延伸下去，这类运算就无法简单地分块。
+
+所幸许多运算的范围有限，因而可以有效地应用 tiling。
+
+对边长度示例这类非局部运算，某些情况下可以推算出有限的范围，例如边的最大长度已知时，扩展范围就有上界，从而仍可分块。
+
+用 \ui{tiles} 函数启用 tiling；\ui{threads} 函数指定 tiling 时使用的 CPU 核数。
+
+\begin{lstlisting}
+# Use a tile size of 1mm tiles(1.mm) # Use 4 CPU cores threads(4) ... tiled operations ... # Disable tiling flat ... non-tiled operations ...
+\end{lstlisting}
+
+某些运算会隐式指定 tile 边界。若边界已知（见上面边长度一例），显式指定边界可以避免为每个 tile 预留过大的重叠区域。
+
+\begin{lstlisting}
+# Use a tile border of 10 micron: tile_borders(10.um) ... tile operations with a 10 micron border ... # Disable the border no_borders
+\end{lstlisting}
+
+关于 tile 尺寸：通常毫米量级就足够；太小的 tile 会让边界重叠与合并的开销超过收益。
+
+\subsection{层次模式}
+
+tiling 之外还有层次模式。在层次模式下，DRC 函数在局部 Cell 环境中运算，把重复的单元内容只算一次。
+
+要启用层次化运算，使用 \ui{deep} 语句：
+
+\begin{lstlisting}
+report("deep 2") # enable deep (hierarchical) operations deep poly = input(3) spc = poly.space(0.5) spc.output("poly space >0.5")
+\end{lstlisting}
+
+\ui{deep} 与 tiling 不兼容：\ui{tiles} 会关闭 \ui{deep}，反之亦然。要关闭 deep 模式，用 \ui{flat}。
+
+deep 处理是图层属性。指定 \ui{deep} 之后，由 \ui{input} 派生的图层即被声明为 deep 图层，后续运算会在层次上保持这一性质。
+
+在布尔运算这类二元运算中，若参与的两个图层都是 deep 的，运算就按层次进行。
+
+要判断某图层是否为 deep，用 \ui{is\_deep?}。
+
+\begin{lstlisting}
+report("deep 2") # enable deep (hierarchical) operations deep poly = input(3) puts poly.is_deep? # -> true poly.flatten puts poly.is_deep? # -> false
+\end{lstlisting}
+
+多数运算都支持层次化，只有少数例外，特别是变换类运算与需要全局信息的运算，会在执行前自动转为平坦处理。
+
+当版图因 Cell variant 而需要回写时，会出现新的 Cell 版本。
+
+把层次化运算的结果送往 report database 时，标记会列在检测到它的那个 Cell 之下，而不是全部堆到顶层。
+
+\subsubsection{限制}
+
+需要合并 Polygon 的函数会利用 net 聚类算法来形成合并后的 Polygon。
+
+除上述 Cell variant 情形之外，DRC 的层次模式不会改动 Cell 层次，因此版图与 schematic 的层次对应关系得以保留。
+
+\subsection{DRC 与用户属性}
+
+DRC 特性对用户属性（user properties）有一定支持。用户属性是挂在图形上的键值对集合。
+
+对 DRC 而言，挂在一个图形上的属性集合被视为整体；DRC 可以在多个方面作用于这些属性：
+
+\begin{kldesc}
+\item 忽略属性：这是默认模式
+\item 使用属性：把检查与某些布尔运算配置成只考虑具有特定属性的图形
+\item 映射/过滤：改动属性的键或集合，或把它们去掉
+\item 传递属性：经由 \ui{size} 或 \ui{with\_...} 之类的选择器传递
+\end{kldesc}
+
+此外 DRC 函数也能生成属性，目前只有 \ui{nets} 方法会给图形附上 net 身份属性，用以标明该图形属于哪条 net。
+
+截至本文撰写时，用户属性支持仍有些实验性，但潜力很大。
+
+目前，以下运算可以按“属性相同或不同”来限定作用对象：
+
+\begin{kldesc}
+\item Polygon 布尔运算：\ui{and}、\ui{not}、\ui{andnot}
+\item polygon 模式下的 DRC 检查，例如 \ui{separation}、\ui{space}、\ui{isolated} 等
+\end{kldesc}
+
+许多运算会传递属性，例如 edge pair 转 Polygon、edge pair 转 edge、Polygon 转 edge，以及多边形的布尔运算与 sizing。
+
+属性的生成目前支持：
+
+\begin{kldesc}
+\item 从输入版图读取属性
+\item 用 \ui{nets} 功能生成 net 身份属性
+\end{kldesc}
+
+属性的修改只提供非常基础的支持：可以整层或按条件移除属性，也可以按映射表改写属性的键，但目前还不能做更复杂的计算。
+
+总体而言，一旦图层带上属性，属性不同的图形就被视为互不作用。
+
+\subsubsection{读取用户属性}
+
+默认情况下用户属性不会被读入图形容器，需要显式开启：
+
+\begin{lstlisting}
+l1 = input(1, 0, enable_props)
+\end{lstlisting}
+
+此时可以从属性集合中挑选特定的键，例如只选键为……的值。
+
+\begin{lstlisting}
+l1 = input(1, 0, select_props(17, 18))
+\end{lstlisting}
+
+也可以挑选并在键之间映射，像这样：
+
+\begin{lstlisting}
+l1 = input(1, 0, map_props({ 17 => 1, 18 => 18 }))
+\end{lstlisting}
+
+这会把键为 17 的值映射到键 1，同时按原键读取键 18 的值；其它键的值则被丢弃，不进入结果图层。
+
+\subsubsection{修改属性}
+
+图层带上属性之后，也可以把它们去掉：
+
+\begin{lstlisting}
+layer_without_properties = layer.remove_props
+\end{lstlisting}
+
+同样可以施加 \ui{select\_props} 或 \ui{map\_props}，按特定键过滤或映射键。
+
+\begin{lstlisting}
+reduced_layer = layer.select_props(17, 18) reduced_layer = layer.map_props({ 17 => 1, 18 => 18 })
+\end{lstlisting}
+
+\subsubsection{以 net 标识生成属性}
+
+最主要的应用是用 \ui{nets} 方法生成 net 身份属性：
+
+\begin{lstlisting}
+connect(metal1, via1) connect(via1, metal2) metal1_nets = metal1.nets
+\end{lstlisting}
+
+默认会在属性键 0 上生成唯一的 net 标识（circuit 名与 net 名组成的元组）。可以用参数指定改用其它键。
+
+\begin{lstlisting}
+metal1_nets = metal1.nets(prop(17))
+\end{lstlisting}
+
+\ui{nets} 函数有若干选项，例如可以按名字或 circuit+名字过滤特定 net，也可以指定是否把未命名的 net 一并纳入。
+
+\begin{lstlisting}
+metal1_vdd_net = metal1.nets(prop(nil), "VDD")
+\end{lstlisting}
+
+\subsubsection{在检查与布尔运算中使用属性}
+
+属性的主要用途是在运算中使用。要把布尔运算限定在属性不同的图形之间，可以给运算加上属性条件。
+
+\begin{lstlisting}
+connect(metal1, via1) connect(via1, metal2) metal1_nets = metal1.nets metal2_nets = metal2.nets metal1_over_metal2_connected = metal1_nets.and(metal2_nets, props_eq) metal1_over_metal2_unconnected = metal1_nets.and(metal2_nets, props_ne)
+\end{lstlisting}
+
+也可以用 \ui{props\_copy} 让该运算在输出上保留原属性：
+
+\begin{lstlisting}
+result_with_props = metal1_nets.and(metal2_nets, props_eq + props_copy)
+\end{lstlisting}
+
+同样，属性也能参与检查：
+
+\begin{lstlisting}
+connect(metal1, via1) connect(via1, metal2) metal1_nets = metal1.nets metal2_nets = metal2.nets metal1_space_connected = metal1_nets.space(0.4.um, props_eq) metal1_space_unconnected = metal1_nets.space(1.um, props_ne)
+\end{lstlisting}
+
+\ui{props\_eq}、\ui{props\_ne} 与 \ui{props\_copy} 在通用 DRC 函数（\ui{drc}）上同样可用，这开启了用通用写法做属性相关检查的可能。
+
+\begin{lstlisting}
+connect(metal1, via1) connect(via1, metal2) metal1_nets = metal1.nets metal2_nets = metal2.nets critical_area = l1_nets.drc(primary.sized(0.2.um) & foreign.sized(0.2.um), props_ne)
+\end{lstlisting}
